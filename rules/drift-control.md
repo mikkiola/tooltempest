@@ -25,6 +25,17 @@ Include drift tracking fields per milestone:
   - combined: 0.0  # weighted average (goal×50% + constraint×30% + scope×20%)
 ```
 
+## DocOps-managed fields
+
+`scripts/doc_sync.py` (the DocOps Protocol, ADR-0001) may auto-fill a
+missing `verify:`/`done-when:`/`status:` field with a literal `TODO`
+placeholder at commit time, so `CHECKPOINT.md` stays structurally valid
+even before a human has decided the real value. A `TODO` placeholder is
+not a resolved value — treat a block containing one as still requiring
+human input, and do not count it as `status: done` or as satisfying
+`done-when` for any drift or verification purpose. DocOps only ever
+writes `TODO`; it never fills in the actual field content.
+
 ## Drift thresholds
 
 | combined | Verdict | Action |
