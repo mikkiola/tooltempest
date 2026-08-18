@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mikkiola/tooltempest/schemas/execution-record.schema.json",
+  "title": "DocOps Protocol execution record",
+  "description": "One run of scripts/doc_sync.py (pre-commit or pre-push), written to .tempest/runs/docops_<run_id>.json. Deliberately has no commit_sha field: pre-commit runs before Git computes the new commit's SHA, and pre-push never writes to this schema at all (hard validation only, no file writes). See ADR-0001, 'commit_sha exclusion from the audit record', for the full reasoning.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "run_id",
+    "protocol_version",
+    "hook",
+    "started_at",
+    "finished_at",
+    "total_duration_sec",
+    "steps",
+    "step_durations_ms",
+    "counters",
+    "token_usage",
+    "timeline_summary",
+    "result"
+  ],
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "description": "UTC timestamp plus a short random suffix, e.g. docops_20260818T201530Z_a1b2c3. Collision-safe within the same second. Not a commit SHA.",
+      "pattern": "^docops_[0-9]{8}T[0-9]{6}Z_[0-9a-f]{6}$"
+    },
+    "protocol_version": {
+      "type": "string",
+      "description": "DocOps Protocol version this record was produced by, per ADR-0001 (e.g. \"1.0.0\")."
+    },
+    "hook": {
+      "type": "string",
+      "enum": ["pre-commit"],
+      "description": "Which git hook produced this record. Only pre-commit ever writes a record: pre-push is hard-validation-only per ADR-0001 and never reaches RECORD."
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC timestamp when DETECT began."
+    },
+    "finished_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC timestamp when RECORD finished writing this file, immediately before STAGE."
+    },
+    "total_duration_sec": {
+      "type": "number",
+      "minimum": 0,
+      "description": "finished_at - started_at, in seconds."
+    },
+    "steps": {
+      "type": "array",
+      "description": "Steps actually executed this run, in execution order. Never reordered; a subset only when DETECT found no doc-owned files (no-op run).",
+      "items": {
+        "type": "string",
+        "enum": ["detect", "reconcile", "validate", "record"]
+      },
+      "minItems": 1
+    },
+    "step_durations_ms": {
+      "type": "object",
+      "description": "Wall-clock duration of each executed step, in milliseconds. Keys are a subset of `steps`.",
+      "additionalProperties": false,
+      "properties": {
+        "detect": { "type": "integer", "minimum": 0 },
+        "reconcile": { "type": "integer", "minimum": 0 },
+        "validate": { "type": "integer", "minimum": 0 },
+        "record": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "counters": {
+      "type": "object",
+      "description": "Structural counts from DETECT/RECONCILE over doc-owned files.",
+      "additionalProperties": false,
+      "required": ["scanned", "affected", "updated"],
+      "properties": {
+        "scanned": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Doc-owned files discovered by DETECT (SPEC.md/CHECKPOINT.md pairs and inline-Milestones SPEC.md files)."
+        },
+        "affected": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Of those scanned, how many were structurally MALFORMED (missing CHECKPOINT fields, or an inline Milestones checkbox with empty description)."
+        },
+        "updated": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Of those affected, how many were actually auto-fixed by RECONCILE (missing CHECKPOINT fields filled with a TODO placeholder). Excludes inline-Milestones findings, which are never auto-fixed, and excludes any file that hard-blocked the run."
+        }
+      }
+    },
+    "token_usage": {
+      "type": "object",
+      "description": "Reserved for a future AI-assisted RECONCILE mode (see ADR-0001 Reversal condition). This protocol version makes no model calls, so these are always zero.",
+      "additionalProperties": false,
+      "required": ["calls", "input_tokens", "output_tokens"],
+      "properties": {
+        "calls": { "type": "integer", "minimum": 0, "const": 0 },
+        "input_tokens": { "type": "integer", "minimum": 0, "const": 0 },
+        "output_tokens": { "type": "integer", "minimum": 0, "const": 0 }
+      }
+    },
+    "timeline_summary": {
+      "type": "string",
+      "description": "One-line, human-readable English summary of what this run did, e.g. \"Scanned 5 doc-owned files; 2 malformed; 2 reconciled; validate passed on first attempt.\""
+    },
+    "result": {
+      "type": "string",
+      "enum": ["SUCCESS"],
+      "description": "Always SUCCESS: a record is written only when RECONCILE found something to fix and VALIDATE then passed. Two other outcomes never produce a record at all, by design (ADR-0001, 'pre-commit lifecycle'): (1) DETECT finds no doc-owned files, or none are malformed — the hook exits 0 immediately after DETECT, and RECONCILE/VALIDATE/RECORD/STAGE never run; (2) VALIDATE fails — RECONCILE's changes are restored from snapshot and the hook exits 1 before reaching RECORD. There is no FAIL or NOOP value in this schema because neither case ever calls the code path that writes one."
+    }
+  }
+}
