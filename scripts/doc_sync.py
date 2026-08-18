@@ -90,6 +90,20 @@ def staged_files(root: Path) -> set[str]:
     return {line for line in result.stdout.splitlines() if line}
 
 
+def unstaged_modified_files(root: Path) -> set[str]:
+    """Files with a working-tree edit not yet reflected in the index --
+    i.e. `git diff` (no --cached). Used together with staged_files() to
+    tell an ordinary `git add && git commit` (staged == working tree,
+    safe for RECONCILE to fix-and-restage) apart from a genuine partial
+    staging (index and working tree diverge -- fixing the working tree
+    and restaging it would silently discard whatever the human staged)."""
+    result = subprocess.run(
+        ["git", "diff", "--name-only"],
+        cwd=root, capture_output=True, text=True, check=True,
+    )
+    return {line for line in result.stdout.splitlines() if line}
+
+
 def staged_blob_text(root: Path, relative_path: str) -> str | None:
     """Returns the staged (git index) content of a path, or None if it
     is not staged or cannot be read as text."""
@@ -163,6 +177,7 @@ def reconcile(root: Path, verify_results: list) -> dict:
     must stop before applying anything.
     """
     staged = staged_files(root)
+    unstaged = unstaged_modified_files(root)
 
     scanned = 0
     affected = 0
@@ -183,12 +198,23 @@ def reconcile(root: Path, verify_results: list) -> dict:
     to_fix: list[str] = []
     for source_file in checkpoint_candidates:
         rel = relative_to_root(root, source_file)
-        if rel in staged:
+        # A plain `git add <path>` followed immediately by `git commit`
+        # (the ordinary workflow) leaves the index identical to the
+        # working tree -- rel in staged but NOT in unstaged. That is
+        # safe for RECONCILE: fixing the working tree and restaging it
+        # only replaces the staged blob with an updated copy of the same
+        # content, nothing is discarded. A genuine conflict requires the
+        # index and working tree to actually diverge (rel in BOTH staged
+        # and unstaged) -- a partial/mid-edit staging, where fixing and
+        # restaging the working tree would silently overwrite whatever
+        # the human deliberately staged with something they never saw.
+        if rel in staged and rel in unstaged:
             staged_text = staged_blob_text(root, rel)
             if staged_text is not None and find_checkpoint_missing_fields(staged_text):
                 blocked.append(rel)
             # Staged version is already well-formed (or unreadable as
-            # text): the human already resolved it. Leave it alone.
+            # text): the human already resolved it. Leave both the index
+            # and the further working-tree edit alone.
             continue
         to_fix.append(rel)
 

@@ -74,18 +74,35 @@ rule, not just an implementation default.
    to discover every doc-owned file (`SPEC.md` with a paired
    `CHECKPOINT.md`, or `SPEC.md` with an inline `## Milestones`
    checklist) and its current structural status. Also reads
-   `git diff --cached --name-only` to know which doc-owned files are
-   already staged by the human.
+   `git diff --cached --name-only` (staged) and `git diff --name-only`
+   (unstaged) to know, for each doc-owned file, whether the index and
+   the working tree currently agree.
 2. **RECONCILE** — for each `CHECKPOINT.md` block reported MALFORMED
-   because it is missing `verify:`, `done-when:`, or `status:`: if that
-   file is already staged, `doc_sync.py` re-checks the *staged* blob
-   (`git show :<path>`) against the same structural rule. If the staged
-   version is already well-formed, nothing is done (the human already
-   fixed it). If the staged version is still malformed, this is a
-   conflict — **HARD BLOCK, exit 1**, before any file is touched,
-   listing every conflicting path. Otherwise (file not staged), the
-   missing field(s) are appended with a `TODO` placeholder value to the
-   working-tree copy, after first taking a snapshot (see
+   because it is missing `verify:`, `done-when:`, or `status:`: a
+   conflict exists, precisely, when the file is present in **both** the
+   staged and the unstaged diff sets — i.e. the index holds a different
+   version of the file than the working tree (a partial, mid-edit
+   staging). An ordinary `git add <path>` immediately followed by
+   `git commit` leaves index and working tree identical, so it is
+   staged but *not* unstaged, and is **not** a conflict by this
+   definition: fixing the working tree and restaging it only replaces
+   the staged blob with an updated copy of the same content, nothing a
+   human deliberately staged is discarded. (An earlier version of this
+   record blocked on "already staged" alone, without checking for
+   divergence — that definition blocked the single most common
+   workflow, since a plain `git add` always leaves the file staged.
+   Caught and corrected during `mikkiola/article-pipeline`'s real-repo
+   validation of this protocol, before this record's first use.) When a
+   genuine conflict does exist, `doc_sync.py` re-checks the *staged*
+   blob (`git show :<path>`) against the same structural rule: if it is
+   already well-formed, nothing is done (the human already resolved it,
+   and their further working-tree edit is left alone too — untouched,
+   which may still fail VALIDATE on its own merits, see step 3). If the
+   staged blob is still malformed, this is the actual conflict —
+   **HARD BLOCK, exit 1**, before any file is touched, listing every
+   conflicting path. Otherwise (no conflict, per the definition above),
+   the missing field(s) are appended with a `TODO` placeholder value to
+   the working-tree copy, after first taking a snapshot (see
    SNAPSHOT-BEFORE-MODIFY below). Inline `## Milestones` checkbox lines
    with an empty description are reported by `scripts/verify.py` as
    MALFORMED but are never auto-fixed — inventing description text is
