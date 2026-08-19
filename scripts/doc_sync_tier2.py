@@ -1,16 +1,25 @@
 #!/usr/bin/env python3
-"""Tier 2 /doc-sync diff generation and apply. See ADR-0002
-(docs/adr/0002-tier2-doc-sync.md) and ADR-0003
+"""Tier 2 /doc-sync diff generation, apply, and CLI entry point. See
+ADR-0002 (docs/adr/0002-tier2-doc-sync.md) and ADR-0003
 (docs/adr/0003-tier2-confirmation-granularity.md) for the contract this
 module implements.
 
 Covers: snapshotting the three milestone-reconciliation target files
 (ARCHITECTURE.md, BACKLOG.md, ROADMAP.md), generating a line-level diff
-against proposed content, and applying that content to disk with
-write behavior branched by document role per ADR-0002(b) --
-ARCHITECTURE.md is written directly, BACKLOG.md and ROADMAP.md require
-one per-file human confirmation per ADR-0003. No milestone-detection or
-invocation trigger (a later stage's job).
+against proposed content, applying that content to disk with write
+behavior branched by document role per ADR-0002(b) -- ARCHITECTURE.md
+is written directly, BACKLOG.md and ROADMAP.md require one per-file
+human confirmation per ADR-0003 -- and a CLI (`doc_sync_tier2.py apply
+--proposed <path>`) the calling agent invokes once it has, by its own
+judgment, decided a milestone is complete. This module contains no
+milestone-detection logic of any kind; that judgment happens entirely
+outside this code, per ADR-0002(c).
+
+CLI --proposed JSON key format: keys MUST exactly match the TIER2_DOCS
+strings -- repo-root-relative paths with the "docs/" prefix (e.g.
+"docs/ARCHITECTURE.md"), never a bare filename like "ARCHITECTURE.md".
+A key outside TIER2_DOCS, including such near-misses, is rejected
+outright rather than silently ignored or fuzzy-matched.
 
 scripts/ has no __init__.py, so it is not an importable package --
 this module adds its own directory to sys.path before importing from
@@ -19,12 +28,14 @@ regardless of the caller's working directory.
 """
 from __future__ import annotations
 
+import argparse
 import difflib
+import json
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from doc_sync import relative_to_root, restore_snapshots  # noqa: E402
+from doc_sync import relative_to_root, repo_root, restore_snapshots  # noqa: E402
 
 __all__ = [
     "TIER2_DOCS",
@@ -33,6 +44,7 @@ __all__ = [
     "build_document_diffs",
     "apply_tier2_sync",
     "restore_snapshots",
+    "main",
 ]
 
 # The three Tier 2 target files, per ADR-0002. CONSTITUTION.md is
@@ -249,3 +261,147 @@ def apply_tier2_sync(
         "rolled_back": rolled_back,
         "status": "applied" if written else "no_changes",
     }
+
+
+def _load_proposed(proposed_arg: str, non_interactive: bool) -> dict[str, str]:
+    """Loads and validates the CLI's --proposed JSON payload.
+
+    Reads no gated document into memory beyond what validation requires
+    and touches no Tier 2 target file -- all failures here happen
+    before apply_tier2_sync() is ever called.
+
+    Args:
+      proposed_arg: A file path, or "-" to read the JSON from stdin.
+      non_interactive: Whether --non-interactive was passed. Required
+        to be True when proposed_arg is "-", since apply_tier2_sync()'s
+        interactive confirmations also read from stdin; reading the
+        proposed-content JSON from that same stream would collide with
+        them.
+
+    Returns:
+      {relative_path: new_full_text}, validated to contain only keys
+      from TIER2_DOCS mapped to string values.
+
+    Raises:
+      ValueError: proposed_arg is "-" without non_interactive, the JSON
+        top level isn't an object, a key falls outside TIER2_DOCS, or a
+        value isn't a string.
+      FileNotFoundError: proposed_arg names a path that doesn't exist.
+      json.JSONDecodeError: the loaded content isn't valid JSON.
+    """
+    if proposed_arg == "-":
+        if not non_interactive:
+            raise ValueError(
+                '--proposed - (stdin) requires --non-interactive: '
+                "apply_tier2_sync()'s interactive mode reads confirmations "
+                "from stdin, so reading the proposed-content JSON from the "
+                "same stream would collide with those prompts."
+            )
+        raw = sys.stdin.read()
+    else:
+        raw = Path(proposed_arg).read_text(encoding="utf-8")
+
+    data = json.loads(raw)
+
+    if not isinstance(data, dict):
+        raise ValueError(
+            "--proposed JSON must be an object of {relative_path: "
+            f"new_full_text}}; got a top-level {type(data).__name__}."
+        )
+
+    valid_keys = set(TIER2_DOCS)
+    bad_keys = sorted(key for key in data if key not in valid_keys)
+    if bad_keys:
+        raise ValueError(
+            f"--proposed JSON contains key(s) outside TIER2_DOCS: {bad_keys}. "
+            f"Valid keys are exactly: {list(TIER2_DOCS)} -- repo-root-relative "
+            'paths with the "docs/" prefix (e.g. "docs/ARCHITECTURE.md", not '
+            '"ARCHITECTURE.md").'
+        )
+
+    bad_values = sorted(key for key, value in data.items() if not isinstance(value, str))
+    if bad_values:
+        raise ValueError(
+            f"--proposed JSON value(s) for key(s) {bad_values} must be "
+            "strings (the full proposed file content)."
+        )
+
+    return data
+
+
+def cmd_apply(root: Path, proposed_arg: str, non_interactive: bool) -> int:
+    """Implements the `apply` CLI command: load --proposed content, call
+    apply_tier2_sync(), and report the result.
+
+    Returns:
+      0 if apply_tier2_sync() reports status "applied"; 1 otherwise
+      (invalid --proposed input, a rejected/rolled-back run, or the
+      RuntimeError apply_tier2_sync() raises for a gated document in
+      --non-interactive mode).
+    """
+    try:
+        proposed = _load_proposed(proposed_arg, non_interactive)
+    except FileNotFoundError as exc:
+        print(
+            f"[doc_sync_tier2 apply] FAIL: --proposed path not found: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+    except json.JSONDecodeError as exc:
+        print(
+            f"[doc_sync_tier2 apply] FAIL: --proposed content is not valid JSON: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+    except ValueError as exc:
+        print(f"[doc_sync_tier2 apply] FAIL: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        result = apply_tier2_sync(root, proposed, interactive=not non_interactive)
+    except RuntimeError as exc:
+        print(f"[doc_sync_tier2 apply] FAIL: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"[doc_sync_tier2 apply] status: {result['status']}")
+    print(f"[doc_sync_tier2 apply] written: {result['written']}")
+    print(f"[doc_sync_tier2 apply] rejected: {result['rejected']}")
+    print(f"[doc_sync_tier2 apply] rolled_back: {result['rolled_back']}")
+    return 0 if result["status"] == "applied" else 1
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "-p",
+        "--proposed",
+        required=True,
+        help=(
+            'Path to a JSON file of {"relative_path": "new_full_text"} for '
+            "one or more of the three Tier 2 documents. Keys MUST exactly "
+            'match TIER2_DOCS -- repo-root-relative paths with the "docs/" '
+            'prefix (e.g. "docs/ARCHITECTURE.md"), never a bare filename '
+            'like "ARCHITECTURE.md". A key omitted from the JSON is left '
+            'untouched; a key outside TIER2_DOCS is rejected. Pass "-" to '
+            "read the JSON from stdin instead of a file -- this requires "
+            "--non-interactive, since apply_tier2_sync()'s interactive "
+            "confirmations also read from stdin."
+        ),
+    )
+    parser.add_argument(
+        "--non-interactive",
+        action="store_true",
+        help=(
+            "Apply ARCHITECTURE.md directly without prompting. Any "
+            "proposed change to BACKLOG.md or ROADMAP.md is rejected with "
+            "an error before anything is written -- per ADR-0002(b), this "
+            "mode is not a bypass for the gated documents."
+        ),
+    )
+    args = parser.parse_args()
+    root = repo_root()
+    return cmd_apply(root, args.proposed, args.non_interactive)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
