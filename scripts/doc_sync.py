@@ -301,7 +301,7 @@ def cmd_pre_commit(root: Path) -> int:
     step_durations_ms["detect"] = int((time.monotonic() - t0) * 1000)
 
     if verify_results is None:
-        if "no SPEC.md files found" in verify_stderr:
+        if exit_code == 2:
             print("[doc_sync pre-commit] OK: no SPEC.md files found in this project. Nothing to do.")
             return 0
         print(
