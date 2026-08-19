@@ -117,6 +117,57 @@ hooks rather than copied into a client config directory:
    records; neither needs to be copied anywhere to be useful — read
    them directly from the pinned checkout or this repository.
 
+## Connecting a new project
+
+A step-by-step checklist for wiring up a brand-new ToolTempest
+consumer. This restates "Usage today" above as a linear sequence; for
+*why* each step exists, see ADR-0001
+(`docs/adr/0001-docops-protocol.md`) and ADR-0002
+(`docs/adr/0002-tier2-doc-sync.md`) in this repository.
+
+1. **Pin `.tooltempest.lock`.** Create (or update) the consuming
+   project's `.tooltempest.lock` with the full 40-character commit SHA
+   you intend to use — never a branch name or tag. See "Version
+   identity" above.
+2. **Initial install.** ToolTempest itself ships no installer script —
+   a consuming project needs its own, following the pattern already
+   proven in `mikkiola/article-pipeline`'s `scripts/sync-tooling.sh`:
+   clone this repository, check out the pinned SHA, and copy the V1
+   primitives plus `scripts/doc_sync.py` /
+   `schemas/execution-record.schema.json` into place, per "Usage
+   today" above.
+3. **Activate the git hooks.** Again following article-pipeline's
+   pattern (`scripts/install-hooks.sh`, also not part of this
+   repository): install `pre-commit` and `pre-push` hooks that call
+   `doc_sync.py pre-commit` / `doc_sync.py pre-push`, with a header
+   comment citing `ADR-0001` and the pinned SHA, per "Usage today"
+   above. Re-run this after every resync so `.git/hooks/` picks up any
+   hook-source changes.
+4. **Optional but recommended: Drift Warning.** ToolTempest does not
+   provide this — it is not part of Composition (V2) and does not come
+   for free just by adopting `doc_sync.py`. It lives entirely in
+   `mikkiola/article-pipeline`'s own `scripts/hooks/pre-push`, not in
+   this repository, so each consumer that wants it has to replicate
+   the pattern into its own pre-push hook independently. See
+   `mikkiola/article-pipeline`'s `docs/adr/0032-drift-warning.md` for
+   the design and that repository's `scripts/hooks/pre-push` for the
+   reference implementation (a `git ls-remote` check against this
+   repository's `origin/main`, compared against the consumer's own
+   `.tooltempest.lock` pin).
+5. **Reading a HARD BLOCK or WARNING.** Both come from `doc_sync.py`
+   or the consumer's own `scripts/verify.py`, printed directly to the
+   terminal at commit/push time — read that output first, not "ask
+   whoever set this up":
+   - A **HARD BLOCK** (`doc_sync.py pre-commit` or `pre-push` exits
+     non-zero) means either a staged file is genuinely structurally
+     invalid, or `scripts/verify.py` itself failed to run — the
+     printed message states which, and what to do about each case.
+     See ADR-0001 for the underlying RECONCILE/VALIDATE contract.
+   - A **WARNING** (Drift Warning, if replicated per step 4 above, or
+     any similar consumer-side check) never blocks anything — it's
+     informational. Read the printed line for which command to run
+     next (e.g. `scripts/sync-tooling.sh`).
+
 ## Scope
 
 This repository is the mechanism only: the seven files described in
