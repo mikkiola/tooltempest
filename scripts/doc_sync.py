@@ -60,17 +60,27 @@ def repo_root() -> Path:
     return Path(result.stdout.strip()).resolve()
 
 
-def run_verify(root: Path) -> tuple[int, list | None, str]:
+def run_verify(root: Path) -> tuple[int, list | None, str, bool]:
     """Runs scripts/verify.py and returns (exit_code, parsed_json_or_None,
-    stderr_text). Treated as the single source of structural truth for
-    both DETECT and VALIDATE, per ADR-0001. A non-zero exit code alone
+    stderr_text, crashed). Treated as the single source of structural truth
+    for both DETECT and VALIDATE, per ADR-0001. A non-zero exit code alone
     does not mean failure here -- scripts/verify.py exits 1 whenever any
     discovered file is MALFORMED, which is the expected, normal state
     for DETECT to observe before RECONCILE has run. Callers decide what
-    a given exit code means for their own step."""
+    a given exit code means for their own step.
+
+    `crashed` is True whenever stdout failed to parse as JSON at all --
+    i.e. scripts/verify.py itself never produced its normal structured
+    output (missing file, syntax error, unhandled exception -- or the
+    legitimate "no SPEC.md files found" exit-2 no-op, which also prints
+    no JSON). DETECT already special-cases exit code 2 separately and
+    can ignore this signal; VALIDATE and pre-push, which don't, can use
+    it to tell "verify.py itself is the problem" apart from "verify.py
+    ran fine and reported a real structural finding."
+    """
     verify_path = root / "scripts" / "verify.py"
     if not verify_path.is_file():
-        return 1, None, f"scripts/verify.py not found at {verify_path}"
+        return 1, None, f"scripts/verify.py not found at {verify_path}", True
     proc = subprocess.run(
         [sys.executable, str(verify_path)],
         cwd=root, capture_output=True, text=True,
@@ -79,7 +89,7 @@ def run_verify(root: Path) -> tuple[int, list | None, str]:
         parsed = json.loads(proc.stdout)
     except json.JSONDecodeError:
         parsed = None
-    return proc.returncode, parsed, proc.stderr
+    return proc.returncode, parsed, proc.stderr, parsed is None
 
 
 def staged_files(root: Path) -> set[str]:
@@ -325,15 +335,23 @@ def cmd_pre_commit(root: Path) -> int:
 
     t0 = time.monotonic()
     steps.append("detect")
-    exit_code, verify_results, verify_stderr = run_verify(root)
+    exit_code, verify_results, verify_stderr, _verify_crashed = run_verify(root)
     step_durations_ms["detect"] = int((time.monotonic() - t0) * 1000)
 
     if verify_results is None:
         if exit_code == 2:
             print("[doc_sync pre-commit] OK: no SPEC.md files found in this project. Nothing to do.")
             return 0
+        # _verify_crashed is always True here already (verify_results is
+        # None implies it) -- captured only for symmetry with VALIDATE and
+        # pre-push below, which don't already have this distinction.
         print(
-            "[doc_sync pre-commit] FAIL: could not read structural discovery from scripts/verify.py.",
+            "[doc_sync pre-commit] FAIL: scripts/verify.py did not produce readable "
+            "output (structural discovery could not run). This usually means "
+            "scripts/verify.py itself is missing, has a syntax error, or crashed "
+            "-- see the error below. If the error doesn't look related to anything "
+            "you changed, this is likely a bug in scripts/verify.py itself, not "
+            "your commit -- report it rather than trying to work around it.",
             file=sys.stderr,
         )
         if verify_stderr:
@@ -411,16 +429,33 @@ def cmd_pre_commit(root: Path) -> int:
 
     t0 = time.monotonic()
     steps.append("validate")
-    validate_exit, _validate_results, validate_stderr = run_verify(root)
+    validate_exit, _validate_results, validate_stderr, validate_crashed = run_verify(root)
     step_durations_ms["validate"] = int((time.monotonic() - t0) * 1000)
 
     if validate_exit != 0:
         restore_snapshots(root, result["snapshots"], result["modified"])
-        print(
-            "[doc_sync pre-commit] FAIL: scripts/verify.py did not pass after RECONCILE. "
-            "Restored modified file(s) to their pre-RECONCILE snapshot.",
-            file=sys.stderr,
-        )
+        if validate_crashed:
+            print(
+                "[doc_sync pre-commit] FAIL: scripts/verify.py did not produce "
+                "readable output after RECONCILE (structural discovery could not "
+                "run). This usually means scripts/verify.py itself is missing, "
+                "has a syntax error, or crashed -- see the error below. Restored "
+                "modified file(s) to their pre-RECONCILE snapshot -- nothing was "
+                "left half-fixed. If the error doesn't look related to anything "
+                "you changed, this is likely a bug in scripts/verify.py itself, "
+                "not your commit -- report it rather than trying to work around it.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "[doc_sync pre-commit] FAIL: scripts/verify.py still failed after "
+                "an automatic RECONCILE pass -- likely something RECONCILE doesn't "
+                "auto-fix (e.g. an empty '## Milestones' checkbox description). "
+                "Restored modified file(s) to their pre-RECONCILE snapshot -- "
+                "nothing was left half-fixed. Fix the issue reported below in "
+                "your working tree, then re-stage and retry.",
+                file=sys.stderr,
+            )
         if validate_stderr:
             print(validate_stderr, file=sys.stderr)
         return 1
@@ -462,9 +497,27 @@ def cmd_pre_push(root: Path) -> int:
     """Hard validation only: runs scripts/verify.py and requires exit
     code 0. Never modifies the working tree, never stages anything,
     never writes a git note, never makes a network call."""
-    exit_code, _results, stderr_text = run_verify(root)
+    exit_code, _results, stderr_text, crashed = run_verify(root)
     if exit_code != 0:
-        print("[doc_sync pre-push] FAIL: scripts/verify.py did not pass.", file=sys.stderr)
+        if crashed:
+            print(
+                "[doc_sync pre-push] FAIL: scripts/verify.py did not produce "
+                "readable output (structural discovery could not run). This "
+                "usually means scripts/verify.py itself is missing, has a "
+                "syntax error, or crashed -- see the error below. If the error "
+                "doesn't look related to anything you changed, this is likely "
+                "a bug in scripts/verify.py itself, not your commit -- report "
+                "it rather than trying to work around it.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "[doc_sync pre-push] FAIL: scripts/verify.py did not pass -- see "
+                "the detail below for which file(s)/component(s) are "
+                "structurally invalid. Fix them, commit, and push again; this "
+                "push stays blocked until scripts/verify.py exits 0.",
+                file=sys.stderr,
+            )
         if stderr_text:
             print(stderr_text, file=sys.stderr)
         return 1
