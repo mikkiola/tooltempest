@@ -162,9 +162,14 @@ def apply_checkpoint_fix(text: str, findings: list[dict]) -> str:
     return text
 
 
-def reconcile(root: Path, verify_results: list) -> dict:
+def reconcile(root: Path, verify_results: list, staged: set[str]) -> dict:
     """Structural-only RECONCILE over CHECKPOINT.md files. Never touches
     inline `## Milestones` findings (no safe auto-fix exists for those).
+
+    `staged` is the caller's already-collected `staged_files(root)` result
+    (the caller needs it before RECONCILE runs too, for the UNKNOWN-pattern
+    touched-component check -- passed in here rather than re-shelling out
+    to git a second time for the same data).
 
     Returns:
       {
@@ -176,7 +181,6 @@ def reconcile(root: Path, verify_results: list) -> dict:
     When `blocked` is non-empty, no file has been touched -- the caller
     must stop before applying anything.
     """
-    staged = staged_files(root)
     unstaged = unstaged_modified_files(root)
 
     scanned = 0
@@ -263,11 +267,34 @@ def make_run_id() -> str:
     return f"docops_{ts}_{secrets.token_hex(3)}"
 
 
+# Arbitrary starting point, not a tuned value -- revisit if run volume in
+# practice suggests a different number is warranted.
+RUN_RECORD_RETENTION = 50
+
+
+def prune_run_records(runs_dir: Path) -> list[Path]:
+    """Keeps only the RUN_RECORD_RETENTION most recent run records. The
+    run_id's ISO8601 timestamp prefix (docops_<ISO8601>_<suffix>.json)
+    sorts chronologically as a plain filename string, so the oldest
+    records are simply the first N in sorted order. Returns the paths
+    deleted -- these records are git-tracked (see ADR-0001, One Commit
+    SHA Lineage), so the caller must stage their removal too, not just
+    delete them from disk."""
+    records = sorted(runs_dir.glob("docops_*.json"))
+    excess = len(records) - RUN_RECORD_RETENTION
+    if excess <= 0:
+        return []
+    pruned = records[:excess]
+    for old in pruned:
+        old.unlink()
+    return pruned
+
+
 def write_record(
     root: Path, run_id: str, hook: str, started_at: str, finished_at: str,
     total_duration_sec: float, steps: list[str], step_durations_ms: dict,
     counters: dict, timeline_summary: str,
-) -> Path:
+) -> tuple[Path, list[Path]]:
     record = {
         "run_id": run_id,
         "protocol_version": PROTOCOL_VERSION,
@@ -286,7 +313,8 @@ def write_record(
     runs_dir.mkdir(parents=True, exist_ok=True)
     out_path = runs_dir / f"{run_id}.json"
     out_path.write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    return out_path
+    pruned = prune_run_records(runs_dir)
+    return out_path, pruned
 
 
 def cmd_pre_commit(root: Path) -> int:
@@ -312,6 +340,47 @@ def cmd_pre_commit(root: Path) -> int:
             print(verify_stderr, file=sys.stderr)
         return 1
 
+    staged = staged_files(root)
+
+    # UNKNOWN pattern (no CHECKPOINT.md, no '## Milestones' checklist --
+    # source_file: null) is dropped by the doc_owned filter below before
+    # it ever reaches a MALFORMED check, so it needs its own gate here.
+    # Only blocks when the component is actually touched by this commit
+    # (its SPEC.md is staged, or a staged path falls under its directory)
+    # -- an untouched, still-being-scaffolded component must not block an
+    # unrelated commit.
+    unknown_touched: list[str] = []
+    for entry in verify_results:
+        if entry.get("pattern") != "UNKNOWN":
+            continue
+        spec_path = entry.get("spec_path")
+        if not spec_path:
+            continue
+        rel_spec = relative_to_root(root, spec_path)
+        spec_dir_parts = Path(rel_spec).parent.parts
+        touched = rel_spec in staged or (
+            bool(spec_dir_parts)
+            and any(Path(s).parts[: len(spec_dir_parts)] == spec_dir_parts for s in staged)
+        )
+        if touched:
+            unknown_touched.append(rel_spec)
+
+    if unknown_touched:
+        print(
+            "[doc_sync pre-commit] FAIL: staged component(s) have an unrecognized "
+            "doc structure (UNKNOWN pattern) and cannot be verified:",
+            file=sys.stderr,
+        )
+        for rel in unknown_touched:
+            print(f"  - {rel}", file=sys.stderr)
+        print(
+            "[doc_sync pre-commit] Add a CHECKPOINT.md, or a '## Milestones' "
+            "checklist with checkbox lines, for this component before "
+            "committing changes to it.",
+            file=sys.stderr,
+        )
+        return 1
+
     doc_owned = [e for e in verify_results if e.get("source_file")]
     if not doc_owned or not any(e["structure"].get("status") == "MALFORMED" for e in doc_owned):
         print(
@@ -322,7 +391,7 @@ def cmd_pre_commit(root: Path) -> int:
 
     t0 = time.monotonic()
     steps.append("reconcile")
-    result = reconcile(root, verify_results)
+    result = reconcile(root, verify_results, staged)
     step_durations_ms["reconcile"] = int((time.monotonic() - t0) * 1000)
 
     if result["blocked"]:
@@ -369,13 +438,17 @@ def cmd_pre_commit(root: Path) -> int:
         "TODO); validate passed after reconcile."
     )
     run_id = make_run_id()
-    record_path = write_record(
+    record_path, pruned_paths = write_record(
         root, run_id, "pre-commit", start_wall.isoformat(), finished_wall.isoformat(),
         total_duration_sec, steps, step_durations_ms, counters, timeline_summary,
     )
     step_durations_ms["record"] = int((time.monotonic() - t0) * 1000)
 
-    git_add_paths = result["modified"] + [str(record_path.relative_to(root))]
+    git_add_paths = (
+        result["modified"]
+        + [str(record_path.relative_to(root))]
+        + [str(p.relative_to(root)) for p in pruned_paths]
+    )
     subprocess.run(["git", "add", *git_add_paths], cwd=root, check=True)
 
     print(
