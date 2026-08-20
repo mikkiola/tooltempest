@@ -4,22 +4,25 @@ ADR-0002 (docs/adr/0002-tier2-doc-sync.md) and ADR-0003
 (docs/adr/0003-tier2-confirmation-granularity.md) for the contract this
 module implements.
 
-Covers: snapshotting the three milestone-reconciliation target files
-(ARCHITECTURE.md, BACKLOG.md, ROADMAP.md), generating a line-level diff
-against proposed content, applying that content to disk with write
-behavior branched by document role per ADR-0002(b) -- ARCHITECTURE.md
-is written directly, BACKLOG.md and ROADMAP.md require one per-file
-human confirmation per ADR-0003 -- and a CLI (`doc_sync_tier2.py apply
---proposed <path>`) the calling agent invokes once it has, by its own
-judgment, decided a milestone is complete. This module contains no
-milestone-detection logic of any kind; that judgment happens entirely
-outside this code, per ADR-0002(c).
+Covers: snapshotting the four milestone-reconciliation target files
+(ARCHITECTURE.md, README.md, BACKLOG.md, ROADMAP.md), generating a
+line-level diff against proposed content, applying that content to disk
+with write behavior branched by document role per ADR-0002(b) and
+ADR-0004 -- ARCHITECTURE.md and README.md are written directly,
+BACKLOG.md and ROADMAP.md require one per-file human confirmation per
+ADR-0003 -- and a CLI (`doc_sync_tier2.py apply --proposed <path>`) the
+calling agent invokes once it has, by its own judgment, decided a
+milestone is complete. This module contains no milestone-detection
+logic of any kind; that judgment happens entirely outside this code,
+per ADR-0002(c).
 
 CLI --proposed JSON key format: keys MUST exactly match the TIER2_DOCS
-strings -- repo-root-relative paths with the "docs/" prefix (e.g.
-"docs/ARCHITECTURE.md"), never a bare filename like "ARCHITECTURE.md".
-A key outside TIER2_DOCS, including such near-misses, is rejected
-outright rather than silently ignored or fuzzy-matched.
+strings exactly -- repo-root-relative paths, "docs/"-prefixed for the
+three docs/-folder files (e.g. "docs/ARCHITECTURE.md") and un-prefixed
+for README.md, which lives at the repo root. A key outside TIER2_DOCS,
+including such near-misses (e.g. "docs/README.md" or bare
+"ARCHITECTURE.md"), is rejected outright rather than silently ignored
+or fuzzy-matched.
 
 scripts/ has no __init__.py, so it is not an importable package --
 this module adds its own directory to sys.path before importing from
@@ -47,23 +50,27 @@ __all__ = [
     "main",
 ]
 
-# The three Tier 2 target files, per ADR-0002. CONSTITUTION.md is
-# explicitly out of scope for Tier 2 (ADR-0002, Scope / Invariants) and
-# must never be added here. Order is load-bearing: apply_tier2_sync()
-# processes files strictly in this order, so ARCHITECTURE.md's
-# direct-write always happens before either gated confirmation.
-TIER2_DOCS = ("docs/ARCHITECTURE.md", "docs/BACKLOG.md", "docs/ROADMAP.md")
+# The four Tier 2 target files, per ADR-0002 and ADR-0004.
+# CONSTITUTION.md is explicitly out of scope for Tier 2 (ADR-0002,
+# Scope / Invariants) and must never be added here. Order is
+# load-bearing: apply_tier2_sync() processes files strictly in this
+# order, so both direct-write documents (ARCHITECTURE.md, README.md)
+# always happen before either gated confirmation. README.md has no
+# "docs/" prefix because, unlike the other three, it lives at the
+# consuming project's repo root, not under docs/ -- see ADR-0004.
+TIER2_DOCS = ("docs/ARCHITECTURE.md", "README.md", "docs/BACKLOG.md", "docs/ROADMAP.md")
 
 # Documents that require human confirmation before a write, per
 # ADR-0002(b). Everything in TIER2_DOCS not in GATED_DOCS is
-# direct-write (currently just ARCHITECTURE.md).
+# direct-write (ARCHITECTURE.md and, per ADR-0004, README.md).
 GATED_DOCS = frozenset({"docs/BACKLOG.md", "docs/ROADMAP.md"})
 
 
 def snapshot_tier2_docs(root: Path) -> dict[str, tuple[bool, str | None]]:
-    """Takes one invocation-level snapshot covering all three Tier 2
+    """Takes one invocation-level snapshot covering all four Tier 2
     target files, per ADR-0002(a) ("A snapshot is taken once per
-    `/doc-sync` invocation, covering all three target files together").
+    `/doc-sync` invocation, covering all three target files together" --
+    extended to the fourth, README.md, by ADR-0004 on the same terms).
 
     Key format matches doc_sync.py's restore_snapshots() exactly: each
     key is a str, relative to `root`, produced by the same
@@ -139,17 +146,18 @@ def apply_tier2_sync(
 
     Takes its own invocation-level snapshot (per ADR-0002(a) -- callers
     must not pass in a snapshot from an earlier call) and writes files
-    strictly in TIER2_DOCS order: ARCHITECTURE.md, then BACKLOG.md,
-    then ROADMAP.md.
+    strictly in TIER2_DOCS order: ARCHITECTURE.md, then README.md, then
+    BACKLOG.md, then ROADMAP.md -- both direct-write documents always
+    precede both gated ones.
 
-    Write behavior branches by document role, per ADR-0002(b):
-    ARCHITECTURE.md is written directly, with no confirmation. Each of
-    BACKLOG.md and ROADMAP.md requires exactly one accept/reject
-    decision covering its entire proposed diff before it is written --
-    per ADR-0003, there is no partial, per-line application within a
-    file. Every document's diff is printed before its write decision
-    (direct or gated), since visibility is never restricted, only the
-    write itself.
+    Write behavior branches by document role, per ADR-0002(b) and
+    ADR-0004: ARCHITECTURE.md and README.md are written directly, with
+    no confirmation. Each of BACKLOG.md and ROADMAP.md requires exactly
+    one accept/reject decision covering its entire proposed diff before
+    it is written -- per ADR-0003, there is no partial, per-line
+    application within a file. Every document's diff is printed before
+    its write decision (direct or gated), since visibility is never
+    restricted, only the write itself.
 
     In interactive=True mode (the default), a gated document's
     confirmation is read via input(): only a case-insensitive "y" or
@@ -171,10 +179,10 @@ def apply_tier2_sync(
         snapshot_tier2_docs()'s output. May be a subset of TIER2_DOCS;
         a file absent from `proposed` is left untouched.
       interactive: True prompts for each gated document's confirmation.
-        False applies ARCHITECTURE.md directly without prompting, for
-        automated/CI callers that must not block on input() -- it is
-        NOT a general bypass for the gated documents: if `proposed`
-        contains any change to BACKLOG.md or ROADMAP.md while
+        False applies ARCHITECTURE.md and README.md directly without
+        prompting, for automated/CI callers that must not block on
+        input() -- it is NOT a general bypass for the gated documents:
+        if `proposed` contains any change to BACKLOG.md or ROADMAP.md while
         interactive=False, this function raises RuntimeError before
         writing anything. Per ADR-0002(b), gating those two documents
         on human judgment is the decision's entire purpose; a
@@ -378,11 +386,12 @@ def main() -> int:
         required=True,
         help=(
             'Path to a JSON file of {"relative_path": "new_full_text"} for '
-            "one or more of the three Tier 2 documents. Keys MUST exactly "
-            'match TIER2_DOCS -- repo-root-relative paths with the "docs/" '
-            'prefix (e.g. "docs/ARCHITECTURE.md"), never a bare filename '
-            'like "ARCHITECTURE.md". A key omitted from the JSON is left '
-            'untouched; a key outside TIER2_DOCS is rejected. Pass "-" to '
+            "one or more of the four Tier 2 documents. Keys MUST exactly "
+            'match TIER2_DOCS -- repo-root-relative paths, "docs/"-prefixed '
+            'for the docs/-folder files (e.g. "docs/ARCHITECTURE.md") and '
+            'un-prefixed for README.md (repo root). A key omitted from the '
+            'JSON is left untouched; a key outside TIER2_DOCS -- including '
+            'a near-miss like "docs/README.md" -- is rejected. Pass "-" to '
             "read the JSON from stdin instead of a file -- this requires "
             "--non-interactive, since apply_tier2_sync()'s interactive "
             "confirmations also read from stdin."
@@ -392,10 +401,11 @@ def main() -> int:
         "--non-interactive",
         action="store_true",
         help=(
-            "Apply ARCHITECTURE.md directly without prompting. Any "
-            "proposed change to BACKLOG.md or ROADMAP.md is rejected with "
-            "an error before anything is written -- per ADR-0002(b), this "
-            "mode is not a bypass for the gated documents."
+            "Apply ARCHITECTURE.md and README.md directly without "
+            "prompting. Any proposed change to BACKLOG.md or ROADMAP.md "
+            "is rejected with an error before anything is written -- per "
+            "ADR-0002(b), this mode is not a bypass for the gated "
+            "documents."
         ),
     )
     args = parser.parse_args()
