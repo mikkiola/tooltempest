@@ -23,6 +23,7 @@ Markdown primitives (V1, unchanged):
 
 DocOps Protocol (V2, added by ADR-0001 — `docs/adr/0001-docops-protocol.md`):
 - `scripts/doc_sync.py`
+- `scripts/doc_sync_tier2.py`
 - `schemas/execution-record.schema.json`
 - `skills/doc-sync/SKILL.md`
 

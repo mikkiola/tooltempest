@@ -1,0 +1,8 @@
+rules/drift-control.md
+schemas/execution-record.schema.json
+scripts/check_manifest.py
+scripts/doc_sync.py
+scripts/doc_sync_tier2.py
+skills/doc-sync/SKILL.md
+skills/spec/SKILL.md
+skills/verify/SKILL.md
