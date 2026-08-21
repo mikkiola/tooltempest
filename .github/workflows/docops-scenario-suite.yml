@@ -1,0 +1,22 @@
+name: DocOps Scenario Suite
+
+# ADR-0005 (docs/adr/0005-ci-pipeline.md): informational only. Not
+# wired into branch protection as a required check by this workflow --
+# that is a separate, later decision per the ADR's Enforcement section.
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  scenario-suite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # Exact pin per ADR-0005 ("Pinned to an exact version via
+          # actions/setup-python -- 3.14 ... not a floating 'latest'").
+          python-version: '3.14'
+      - name: Run doc_sync.py scenario suite
+        run: tests/test-doc-sync.sh
