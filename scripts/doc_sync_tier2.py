@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Tier 2 /doc-sync diff generation, apply, and CLI entry point. See
-ADR-0002 (docs/adr/0002-tier2-doc-sync.md) and ADR-0003
-(docs/adr/0003-tier2-confirmation-granularity.md) for the contract this
-module implements.
+ADR-0002 (docs/adr/0002-tier2-doc-sync.md), ADR-0003
+(docs/adr/0003-tier2-confirmation-granularity.md), and ADR-0007
+(docs/adr/0007-roadmap-direct-write.md) for the contract this module
+implements.
 
 Covers: snapshotting the four milestone-reconciliation target files
 (ARCHITECTURE.md, README.md, BACKLOG.md, ROADMAP.md), generating a
 line-level diff against proposed content, applying that content to disk
-with write behavior branched by document role per ADR-0002(b) and
-ADR-0004 -- ARCHITECTURE.md and README.md are written directly,
-BACKLOG.md and ROADMAP.md require one per-file human confirmation per
+with write behavior branched by document role per ADR-0002(b),
+ADR-0004, and ADR-0007 -- ARCHITECTURE.md, README.md, and ROADMAP.md
+are written directly, BACKLOG.md requires human confirmation per
 ADR-0003 -- and a CLI (`doc_sync_tier2.py apply --proposed <path>`) the
 calling agent invokes once it has, by its own judgment, decided a
 milestone is complete. This module contains no milestone-detection
@@ -50,20 +51,25 @@ __all__ = [
     "main",
 ]
 
-# The four Tier 2 target files, per ADR-0002 and ADR-0004.
+# The four Tier 2 target files, per ADR-0002, ADR-0004, and ADR-0007.
 # CONSTITUTION.md is explicitly out of scope for Tier 2 (ADR-0002,
-# Scope / Invariants) and must never be added here. Order is
-# load-bearing: apply_tier2_sync() processes files strictly in this
-# order, so both direct-write documents (ARCHITECTURE.md, README.md)
-# always happen before either gated confirmation. README.md has no
-# "docs/" prefix because, unlike the other three, it lives at the
-# consuming project's repo root, not under docs/ -- see ADR-0004.
+# Scope / Invariants) and must never be added here. apply_tier2_sync()
+# processes files strictly in this order; with GATED_DOCS now holding
+# only BACKLOG.md (ADR-0007), that no longer places every direct-write
+# document ahead of the (single) gated one -- ROADMAP.md, direct-write
+# since ADR-0007, still comes after BACKLOG.md here. This is harmless:
+# a BACKLOG.md rejection rolls back only what was already written
+# (ARCHITECTURE.md, README.md), and ROADMAP.md is untouched until its
+# own turn. README.md has no "docs/" prefix because, unlike the other
+# three, it lives at the consuming project's repo root, not under
+# docs/ -- see ADR-0004.
 TIER2_DOCS = ("docs/ARCHITECTURE.md", "README.md", "docs/BACKLOG.md", "docs/ROADMAP.md")
 
 # Documents that require human confirmation before a write, per
 # ADR-0002(b). Everything in TIER2_DOCS not in GATED_DOCS is
-# direct-write (ARCHITECTURE.md and, per ADR-0004, README.md).
-GATED_DOCS = frozenset({"docs/BACKLOG.md", "docs/ROADMAP.md"})
+# direct-write (ARCHITECTURE.md; README.md per ADR-0004; ROADMAP.md
+# per ADR-0007).
+GATED_DOCS = frozenset({"docs/BACKLOG.md"})
 
 
 def snapshot_tier2_docs(root: Path) -> dict[str, tuple[bool, str | None]]:
@@ -98,8 +104,8 @@ def build_document_diffs(
     """Produces a unified line-level diff for each proposed document,
     comparing the invocation-start snapshot against proposed new
     content. Uses the same diff format for every document regardless of
-    role (ARCHITECTURE.md vs. BACKLOG.md/ROADMAP.md) -- confirmation
-    gating by role is a later stage's concern, not this function's.
+    role (ARCHITECTURE.md vs. BACKLOG.md) -- confirmation gating by
+    role is a later stage's concern, not this function's.
 
     Args:
       snapshots: Output of snapshot_tier2_docs().
@@ -147,14 +153,16 @@ def apply_tier2_sync(
     Takes its own invocation-level snapshot (per ADR-0002(a) -- callers
     must not pass in a snapshot from an earlier call) and writes files
     strictly in TIER2_DOCS order: ARCHITECTURE.md, then README.md, then
-    BACKLOG.md, then ROADMAP.md -- both direct-write documents always
-    precede both gated ones.
+    BACKLOG.md, then ROADMAP.md. BACKLOG.md is the only gated document
+    (per ADR-0007); ROADMAP.md, though direct-write, still comes after
+    it in this order -- a BACKLOG.md rejection rolls back only what was
+    already written (ARCHITECTURE.md, README.md), so this is safe.
 
-    Write behavior branches by document role, per ADR-0002(b) and
-    ADR-0004: ARCHITECTURE.md and README.md are written directly, with
-    no confirmation. Each of BACKLOG.md and ROADMAP.md requires exactly
-    one accept/reject decision covering its entire proposed diff before
-    it is written -- per ADR-0003, there is no partial, per-line
+    Write behavior branches by document role, per ADR-0002(b), ADR-0004,
+    and ADR-0007: ARCHITECTURE.md, README.md, and ROADMAP.md are written
+    directly, with no confirmation. BACKLOG.md requires exactly one
+    accept/reject decision covering its entire proposed diff before it
+    is written -- per ADR-0003, there is no partial, per-line
     application within a file. Every document's diff is printed before
     its write decision (direct or gated), since visibility is never
     restricted, only the write itself.
@@ -179,15 +187,15 @@ def apply_tier2_sync(
         snapshot_tier2_docs()'s output. May be a subset of TIER2_DOCS;
         a file absent from `proposed` is left untouched.
       interactive: True prompts for each gated document's confirmation.
-        False applies ARCHITECTURE.md and README.md directly without
-        prompting, for automated/CI callers that must not block on
-        input() -- it is NOT a general bypass for the gated documents:
-        if `proposed` contains any change to BACKLOG.md or ROADMAP.md while
-        interactive=False, this function raises RuntimeError before
-        writing anything. Per ADR-0002(b), gating those two documents
-        on human judgment is the decision's entire purpose; a
-        non-interactive path that could apply them unreviewed would
-        defeat it outright.
+        False applies ARCHITECTURE.md, README.md, and ROADMAP.md
+        directly without prompting, for automated/CI callers that must
+        not block on input() -- it is NOT a general bypass for the
+        gated document: if `proposed` contains any change to
+        BACKLOG.md while interactive=False, this function raises
+        RuntimeError before writing anything. Per ADR-0002(b), gating
+        that document on human judgment is the decision's entire
+        purpose; a non-interactive path that could apply it unreviewed
+        would defeat it outright.
 
     Returns:
       {
@@ -214,9 +222,9 @@ def apply_tier2_sync(
         if blocked:
             raise RuntimeError(
                 "apply_tier2_sync(interactive=False) cannot apply changes to "
-                f"gated document(s) {blocked}: BACKLOG.md and ROADMAP.md "
-                "require human confirmation per ADR-0002(b). Non-interactive "
-                "mode is restricted to ARCHITECTURE.md; call with "
+                f"gated document(s) {blocked}: BACKLOG.md requires human "
+                "confirmation per ADR-0002(b). Non-interactive mode is "
+                "restricted to the direct-write documents; call with "
                 "interactive=True to apply changes to gated documents."
             )
 
@@ -401,11 +409,11 @@ def main() -> int:
         "--non-interactive",
         action="store_true",
         help=(
-            "Apply ARCHITECTURE.md and README.md directly without "
-            "prompting. Any proposed change to BACKLOG.md or ROADMAP.md "
-            "is rejected with an error before anything is written -- per "
+            "Apply ARCHITECTURE.md, README.md, and ROADMAP.md directly "
+            "without prompting. Any proposed change to BACKLOG.md is "
+            "rejected with an error before anything is written -- per "
             "ADR-0002(b), this mode is not a bypass for the gated "
-            "documents."
+            "document."
         ),
     )
     args = parser.parse_args()
