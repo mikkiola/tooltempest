@@ -14,7 +14,7 @@ previously kept as local, client-specific configuration.
 
 ## Composition (V2)
 
-Seven files, across two kinds of content:
+Seven mechanism files, across two kinds of content:
 
 Markdown primitives (V1, unchanged):
 - `skills/spec/SKILL.md`
@@ -40,6 +40,25 @@ via git hooks — not only copying instructional text into a client's
 config directory. See `docs/adr/0001-docops-protocol.md` for the full
 protocol contract and the scope-boundary reasoning for why this addition
 does not compromise client independence (below).
+
+## Reference documentation (added by ADR-0008)
+
+A separate category from the seven mechanism files above:
+`docs/reference/` holds shared reference documents meant to be read and
+followed by a consuming project's Claude Code sessions, but **not**
+copied into a client config directory the way `rules/` files are —
+there is no `~/.claude/` destination for anything in this directory.
+A consuming project either points to the pinned copy in this
+repository, or vendors its own copy into its own repo; either way the
+document is consulted in place, not installed as a rule.
+
+- `docs/reference/canonical-documentation-bible.md` — structural and
+  style rules for `CONSTITUTION.md`/`ARCHITECTURE.md`/`ROADMAP.md`/
+  `BACKLOG.md`/`docs/adr/`, intended to apply across every project in
+  this ecosystem (article-pipeline, tooltempest, Radar, future Brain).
+
+See `docs/adr/0008-reference-documentation-category.md` for why this
+category exists as distinct from `rules/`.
 
 ## Version identity
 
@@ -171,8 +190,10 @@ consumer. This restates "Usage today" above as a linear sequence; for
 
 ## Scope
 
-This repository is the mechanism only: the seven files described in
-"Composition (V2)" above. Project-specific content (for example, a
+This repository holds two kinds of content: the seven mechanism files
+described in "Composition (V2)" above, and shared reference
+documentation under `docs/reference/` (see "Reference documentation"
+above, added by ADR-0008). Project-specific content (for example, a
 given project's own `CHECKPOINT.md`, or its own `scripts/verify.py`)
 does not belong here and is not included. `doc_sync.py` calls a
 consuming project's `scripts/verify.py` as a subprocess but contains no

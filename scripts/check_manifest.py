@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Independent completeness check for MANIFEST.txt, per ADR-0006
-(docs/adr/0006-vendor-manifest.md). Compares MANIFEST.txt against
-`git ls-files` across the four Composition directories (scripts/,
-schemas/, skills/, rules/) and exits non-zero on any mismatch in
-either direction (a file present on disk but missing from the
-manifest, or listed in the manifest but no longer present).
+(docs/adr/0006-vendor-manifest.md) and ADR-0008
+(docs/adr/0008-reference-documentation-category.md). Compares
+MANIFEST.txt against `git ls-files` across the five Composition
+directories (scripts/, schemas/, skills/, rules/, docs/reference/) and
+exits non-zero on any mismatch in either direction (a file present on
+disk but missing from the manifest, or listed in the manifest but no
+longer present).
 
 Standalone by design, per ADR-0006: runnable by a developer locally or
 as this repository's own local pre-commit hook, with no dependency on
@@ -24,10 +26,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from doc_sync import repo_root  # noqa: E402
 
-# The four Composition directories, per ADR-0006 ("every git-tracked
-# file under scripts/, schemas/, skills/, rules/") -- the same four
-# directories README's "Composition" section describes.
-COMPOSITION_DIRS = ("scripts/", "schemas/", "skills/", "rules/")
+# The five Composition directories: the four from ADR-0006 ("every
+# git-tracked file under scripts/, schemas/, skills/, rules/") plus
+# docs/reference/, added by ADR-0008 for shared reference documentation
+# -- the same directories README's "Composition"/"Scope" sections
+# describe.
+COMPOSITION_DIRS = ("scripts/", "schemas/", "skills/", "rules/", "docs/reference/")
 
 MANIFEST_NAME = "MANIFEST.txt"
 
