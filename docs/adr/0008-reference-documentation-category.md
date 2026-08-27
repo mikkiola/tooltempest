@@ -48,7 +48,7 @@ files are — no `~/.claude/` destination. A reference document is
 consulted in place: a consuming project points to it, or vendors its
 own copy into its own repository, rather than installing it as a rule.
 
-First file in the category: `docs/reference/canonical-documentation-bible.md`.
+First file in the category: `docs/reference/documentation-rules.md`.
 
 `docs/reference/` joins the four existing Composition directories as a
 fifth tracked directory in `MANIFEST.txt`'s ground truth. This is a
@@ -57,7 +57,7 @@ should be listed in the manifest regardless of category, so
 `scripts/check_manifest.py`'s `COMPOSITION_DIRS` tuple is updated from
 `("scripts/", "schemas/", "skills/", "rules/")` to
 `("scripts/", "schemas/", "skills/", "rules/", "docs/reference/")`, and
-`docs/reference/canonical-documentation-bible.md` is added to
+`docs/reference/documentation-rules.md` is added to
 `MANIFEST.txt` in the same commit that adds the file itself.
 
 ## Alternatives & Rationale
@@ -97,7 +97,7 @@ than overloading it.
   copied to `~/.claude/`).
 - `scripts/check_manifest.py`'s `COMPOSITION_DIRS` includes
   `docs/reference/`; `MANIFEST.txt` includes
-  `docs/reference/canonical-documentation-bible.md`.
+  `docs/reference/documentation-rules.md`.
 - Every consuming project (article-pipeline, Radar, future Brain) may
   be told this new category exists, but each project decides
   independently whether and how to reference it — this ADR does not
@@ -119,7 +119,7 @@ consultation model doesn't hold in practice.
 ## Source
 
 Owner decision, 2026-08-26, in response to a real placement question
-raised while adding the Canonical Documentation Bible to
+raised while adding the Documentation Rules to
 `mikkiola/tooltempest`: `rules/` was the initially assumed placement,
 found not to fit on inspection of `drift-control.md`'s actual
 frontmatter semantics and README's own "Scope" section, and escalated

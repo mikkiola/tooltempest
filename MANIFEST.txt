@@ -1,4 +1,4 @@
-docs/reference/canonical-documentation-bible.md
+docs/reference/documentation-rules.md
 rules/drift-control.md
 schemas/execution-record.schema.json
 scripts/check_manifest.py

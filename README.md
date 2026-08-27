@@ -52,7 +52,7 @@ A consuming project either points to the pinned copy in this
 repository, or vendors its own copy into its own repo; either way the
 document is consulted in place, not installed as a rule.
 
-- `docs/reference/canonical-documentation-bible.md` — structural and
+- `docs/reference/documentation-rules.md` — structural and
   style rules for `CONSTITUTION.md`/`ARCHITECTURE.md`/`ROADMAP.md`/
   `BACKLOG.md`/`docs/adr/`, intended to apply across every project in
   this ecosystem (article-pipeline, tooltempest, Radar, future Brain).

@@ -1,4 +1,4 @@
-# Canonical Documentation Bible
+# Documentation Rules
 
 Applies to every project in this ecosystem (article-pipeline,
 tooltempest, Radar, future Brain and others). Written in English per
