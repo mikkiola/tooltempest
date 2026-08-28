@@ -236,9 +236,14 @@ phase it belongs to. No rationale (→ docs/adr/).
    force an advisory sentence into a table cell to satisfy a
    table-only aesthetic — that misrepresents a discretionary
    recommendation as a deterministic fact.
-3. **Dependency chain** — a simple diagram (ASCII arrows in a fenced
-   code block is an established, acceptable form) showing the sequence
-   phases actually depend on each other in.
+3. **Dependency chain** — a table, `Phase or Component | Depends on`,
+   sourced from and kept consistent with ARCHITECTURE.md's own `Depends
+   on` column for the same entities. A fenced diagram is acceptable
+   only for content with no lossless tabular equivalent (e.g., a
+   branching/looping process flow, not a simple dependency list) — see
+   `docs/adr/0009-roadmap-dependency-table.md` for why: this ecosystem's
+   own doc-sync tooling cannot parse or validate fenced diagrams,
+   making them exactly as drift-prone as untracked prose.
 4. **Open decisions** — a one-line pointer to BACKLOG.md's "Owner
    decisions needed" section, not a duplicate list.
 
