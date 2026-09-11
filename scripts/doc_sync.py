@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """DocOps Protocol runtime. See ADR-0001 (docs/adr/0001-docops-protocol.md)
-for the full contract this module implements.
+for the original contract this module implements, and ADR-0010
+(docs/adr/0010-retire-checkpoint-md-support.md) for why CHECKPOINT.md
+support was removed.
 
 Two entry points, invoked from a consuming project's local git hooks:
 
-  doc_sync.py pre-commit   DETECT -> RECONCILE -> VALIDATE -> RECORD -> STAGE
+  doc_sync.py pre-commit   DETECT -> VALIDATE -> RECORD -> STAGE
   doc_sync.py pre-push     hard validation only (runs scripts/verify.py)
 
-Client-agnostic: this module knows only the SPEC.md/CHECKPOINT.md
+Client-agnostic: this module knows only the inline-Milestones SPEC.md
 convention scripts/verify.py (a project-local script, not part of
 ToolTempest) already validates structurally. It carries no project- or
 domain-specific logic of any kind.
@@ -15,18 +17,10 @@ domain-specific logic of any kind.
 Design notes that are load-bearing, not incidental (see ADR-0001 for
 the full reasoning behind each):
 
-- RECONCILE never writes anything: a CHECKPOINT.md block missing
-  `verify:`/`done-when:`/`status:` blocks the whole commit instead,
-  staged or not, reporting a DRIFT/QUESTION pair per missing field. It
-  never invents a field's *value* -- not even an honest `TODO`
-  placeholder, since writing anything into the file without a human
-  decision authorizing that value is itself the violation (Hub Rules
-  v3.6 Rule 3). It never auto-fixes an inline `## Milestones` checkbox
-  with an empty description either, for the same reason.
-- Because RECONCILE never writes, there is nothing for a VALIDATE
-  failure to restore -- if `scripts/verify.py` still fails at VALIDATE,
-  it is for a reason RECONCILE was never going to touch (e.g. an empty
-  `## Milestones` checkbox description).
+- doc_sync.py never writes to any doc-owned file. It only validates
+  (via a consuming project's own scripts/verify.py) and blocks the
+  commit on failure -- there is nothing to snapshot or restore, because
+  nothing is ever modified.
 - The execution record written by RECORD has no commit_sha field: the
   commit does not exist yet when RECORD runs.
 - STAGE (`git add`) runs exactly once, strictly after VALIDATE has
@@ -36,7 +30,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import secrets
 import subprocess
 import sys
@@ -45,14 +38,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 PROTOCOL_VERSION = "1.0.0"
-
-CHECKPOINT_BLOCK_HEADING_RE = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
-CHECKPOINT_REQUIRED_FIELD_RES = {
-    "verify": re.compile(r"^\s*-\s*verify:", re.MULTILINE),
-    "done-when": re.compile(r"^\s*-\s*done-when:", re.MULTILINE),
-    "status": re.compile(r"^\s*-\s*status:", re.MULTILINE),
-}
-REQUIRED_FIELD_ORDER = ("verify", "done-when", "status")
 
 
 def repo_root() -> Path:
@@ -68,9 +53,9 @@ def run_verify(root: Path) -> tuple[int, list | None, str, bool]:
     stderr_text, crashed). Treated as the single source of structural truth
     for both DETECT and VALIDATE, per ADR-0001. A non-zero exit code alone
     does not mean failure here -- scripts/verify.py exits 1 whenever any
-    discovered file is MALFORMED, which is the expected, normal state
-    for DETECT to observe before RECONCILE has run. Callers decide what
-    a given exit code means for their own step.
+    discovered file is MALFORMED, which is a normal state for DETECT to
+    observe. Callers decide what a given exit code means for their own
+    step.
 
     `crashed` is True whenever stdout failed to parse as JSON at all --
     i.e. scripts/verify.py itself never produced its normal structured
@@ -103,109 +88,8 @@ def staged_files(root: Path) -> set[str]:
     return {line for line in result.stdout.splitlines() if line}
 
 
-def staged_blob_text(root: Path, relative_path: str) -> str | None:
-    """Returns the staged (git index) content of a path, or None if it
-    is not staged or cannot be read as text."""
-    proc = subprocess.run(
-        ["git", "show", f":{relative_path}"],
-        cwd=root, capture_output=True, text=True,
-    )
-    if proc.returncode != 0:
-        return None
-    return proc.stdout
-
-
 def relative_to_root(root: Path, absolute_path: str) -> str:
     return str(Path(absolute_path).resolve().relative_to(root))
-
-
-def find_checkpoint_missing_fields(text: str) -> list[dict]:
-    """Independently re-derives, from raw file text, which '## <heading>'
-    blocks are missing which required field -- applying the same
-    structural rule scripts/verify.py uses. Returns a list of
-    {"heading", "insert_at", "missing"} with insert_at as the absolute
-    offset immediately after the heading's own line, so a fix can be
-    inserted without re-locating the block by name (heading text is not
-    guaranteed unique within a file)."""
-    headings = list(CHECKPOINT_BLOCK_HEADING_RE.finditer(text))
-    findings = []
-    for i, match in enumerate(headings):
-        block_end = headings[i + 1].start() if i + 1 < len(headings) else len(text)
-        content = text[match.end():block_end]
-        missing = [
-            name for name in REQUIRED_FIELD_ORDER
-            if not CHECKPOINT_REQUIRED_FIELD_RES[name].search(content)
-        ]
-        if not missing:
-            continue
-        insert_at = match.end()
-        if insert_at < len(text) and text[insert_at] == "\n":
-            insert_at += 1
-        findings.append({
-            "heading": match.group(1).strip(),
-            "insert_at": insert_at,
-            "missing": missing,
-        })
-    return findings
-
-
-def reconcile(root: Path, verify_results: list, staged: set[str]) -> dict:
-    """Structural-only check over CHECKPOINT.md files. Never writes
-    anything: a `## <heading>` block missing `verify:`/`done-when:`/
-    `status:` blocks the whole commit instead, staged or not (Hub Rules
-    v3.6 Rule 3 -- ask one specific question, don't fill the gap
-    yourself; even an honest `TODO` placeholder still fills it,
-    structurally). Never touches inline `## Milestones` findings either
-    (no safe auto-fix exists for those).
-
-    Missing fields are read from the *staged* blob when the file is
-    staged -- that is what will actually be committed -- falling back
-    to the working-tree copy `scripts/verify.py` already scanned
-    otherwise (an untouched, not-yet-staged file this commit doesn't
-    even involve).
-
-    `staged` is the caller's already-collected `staged_files(root)` result
-    (the caller needs it before this check runs too, for the
-    UNKNOWN-pattern touched-component check -- passed in here rather
-    than re-shelling out to git a second time for the same data).
-
-    Returns:
-      {
-        "blocked": [{"path": relative_path, "missing": [field, ...]}, ...],
-        "scanned": int, "affected": int,
-      }
-    When `blocked` is non-empty, no file has been touched -- the caller
-    must stop before VALIDATE.
-    """
-    scanned = 0
-    affected = 0
-    checkpoint_candidates: list[str] = []
-    for entry in verify_results:
-        source_file = entry.get("source_file")
-        if not source_file:
-            continue
-        scanned += 1
-        structure = entry.get("structure", {})
-        if structure.get("status") != "MALFORMED":
-            continue
-        affected += 1
-        if entry.get("pattern") == "checkpoint":
-            checkpoint_candidates.append(source_file)
-
-    blocked: list[dict] = []
-    for source_file in checkpoint_candidates:
-        rel = relative_to_root(root, source_file)
-        text = staged_blob_text(root, rel) if rel in staged else None
-        if text is None:
-            text = (root / rel).read_text(encoding="utf-8")
-        missing = sorted(
-            {name for finding in find_checkpoint_missing_fields(text) for name in finding["missing"]},
-            key=REQUIRED_FIELD_ORDER.index,
-        )
-        if missing:
-            blocked.append({"path": rel, "missing": missing})
-
-    return {"blocked": blocked, "scanned": scanned, "affected": affected}
 
 
 def make_run_id() -> str:
@@ -296,9 +180,9 @@ def cmd_pre_commit(root: Path) -> int:
 
     staged = staged_files(root)
 
-    # UNKNOWN pattern (no CHECKPOINT.md, no '## Milestones' checklist --
-    # source_file: null) is dropped by the doc_owned filter below before
-    # it ever reaches a MALFORMED check, so it needs its own gate here.
+    # UNKNOWN pattern (no '## Milestones' checklist -- source_file: null)
+    # is dropped by the doc_owned filter below before it ever reaches a
+    # MALFORMED check, so it needs its own gate here.
     # Only blocks when the component is actually touched by this commit
     # (its SPEC.md is staged, or a staged path falls under its directory)
     # -- an untouched, still-being-scaffolded component must not block an
@@ -328,9 +212,9 @@ def cmd_pre_commit(root: Path) -> int:
         for rel in unknown_touched:
             print(f"  - {rel}", file=sys.stderr)
         print(
-            "[doc_sync pre-commit] Add a CHECKPOINT.md, or a '## Milestones' "
-            "checklist with checkbox lines, for this component before "
-            "committing changes to it.",
+            "[doc_sync pre-commit] Add a '## Milestones' checklist with "
+            "checkbox lines for this component before committing changes "
+            "to it.",
             file=sys.stderr,
         )
         return 1
@@ -339,32 +223,12 @@ def cmd_pre_commit(root: Path) -> int:
     if not doc_owned or not any(e["structure"].get("status") == "MALFORMED" for e in doc_owned):
         print(
             f"[doc_sync pre-commit] OK: {len(doc_owned)} doc-owned file(s) scanned, "
-            "all structurally OK. Nothing to reconcile."
+            "all structurally OK."
         )
         return 0
 
-    t0 = time.monotonic()
-    steps.append("reconcile")
-    result = reconcile(root, verify_results, staged)
-    step_durations_ms["reconcile"] = int((time.monotonic() - t0) * 1000)
-
-    if result["blocked"]:
-        print(
-            "[doc_sync pre-commit] FAIL: staged doc-owned file(s) are missing "
-            "required field(s):",
-            file=sys.stderr,
-        )
-        for item in result["blocked"]:
-            for field in item["missing"]:
-                print(f"[DRIFT] {item['path']}: missing required field `{field}`", file=sys.stderr)
-                print(f"[QUESTION] What should `{field}` be?", file=sys.stderr)
-        print(
-            "[doc_sync pre-commit] DocOps never invents a field's value -- not "
-            "even an honest TODO placeholder. Answer the question(s) above by "
-            "hand in the file itself, then re-stage and retry.",
-            file=sys.stderr,
-        )
-        return 1
+    scanned = len(doc_owned)
+    affected = sum(1 for e in doc_owned if e["structure"].get("status") == "MALFORMED")
 
     t0 = time.monotonic()
     steps.append("validate")
@@ -386,11 +250,10 @@ def cmd_pre_commit(root: Path) -> int:
             )
         else:
             print(
-                "[doc_sync pre-commit] FAIL: scripts/verify.py still failed even "
-                "though no CHECKPOINT.md field was missing -- likely an inline "
-                "'## Milestones' checkbox with an empty description, which is "
-                "never auto-fixed. Fix the issue reported below in your working "
-                "tree, then re-stage and retry.",
+                "[doc_sync pre-commit] FAIL: scripts/verify.py still failed -- "
+                "likely an inline '## Milestones' checkbox with an empty "
+                "description, which is never auto-fixed. Fix the issue "
+                "reported below in your working tree, then re-stage and retry.",
                 file=sys.stderr,
             )
         if validate_stderr:
@@ -402,10 +265,10 @@ def cmd_pre_commit(root: Path) -> int:
     finished_wall = datetime.now(timezone.utc)
     total_duration_sec = time.monotonic() - start_perf
     counters = {
-        "scanned": result["scanned"], "affected": result["affected"], "updated": 0,
+        "scanned": scanned, "affected": affected, "updated": 0,
     }
     timeline_summary = (
-        f"Scanned {result['scanned']} doc-owned file(s); {result['affected']} structurally "
+        f"Scanned {scanned} doc-owned file(s); {affected} structurally "
         "malformed; validate passed."
     )
     run_id = make_run_id()

@@ -1,6 +1,6 @@
 ---
 name: doc-sync
-description: "Explains the DocOps Protocol (ADR-0001): what scripts/doc_sync.py does when it runs as a git pre-commit/pre-push hook, and how to read a .tempest/runs/docops_<run_id>.json audit record. Triggers on: docops, doc sync, doc_sync.py, reconcile, why did my commit change SPEC.md/CHECKPOINT.md, DocOps audit record. NOT for: writing a new SPEC.md (use /spec), running typecheck/lint/test/build (use /verify)."
+description: "Explains the DocOps Protocol (ADR-0001, ADR-0010): what scripts/doc_sync.py does when it runs as a git pre-commit/pre-push hook, and how to read a .tempest/runs/docops_<run_id>.json audit record. Triggers on: docops, doc sync, doc_sync.py, why did my commit block on SPEC.md, DocOps audit record. NOT for: writing a new SPEC.md (use /spec), running typecheck/lint/test/build (use /verify)."
 user-invocable: true
 disable-model-invocation: false
 allowed-tools: Read, Bash, Grep
@@ -16,41 +16,21 @@ does not itself modify anything.
 
 ## What actually happens on a commit
 
-`pre-commit` runs five steps, strictly in this order, every time:
+`pre-commit` runs four steps, strictly in this order, every time:
 
 1. **DETECT** — runs the consuming project's own `scripts/verify.py` to
-   discover every `SPEC.md`/`CHECKPOINT.md` pair and inline-Milestones
-   `SPEC.md`, and their current structural status.
-2. **RECONCILE** — for a `CHECKPOINT.md` block missing `verify:`,
-   `done-when:`, or `status:`: DocOps writes nothing into the
-   document — staged or not. The whole commit is blocked (exit 1)
-   before anything is touched, and DocOps reports the gap instead of
-   filling it, one pair per missing field:
-
-   ```
-   [DRIFT] CHECKPOINT.md: missing required field `verify`
-   [QUESTION] What should `verify` be?
-   ```
-
-   RECONCILE never invents a field's actual value and never writes a
-   placeholder for one — not even an honest `TODO` — because writing
-   anything into the canonical document without a human decision
-   authorizing that value is itself the violation (Hub Rules v3.6 Rule
-   3: ask one specific question, don't fill the gap yourself — a
-   placeholder still fills it, structurally). It never touches an
-   inline `## Milestones` checkbox with an empty description either,
-   for the same reason.
-3. **VALIDATE** — re-runs `scripts/verify.py` against the tree,
-   unchanged from what DETECT saw (RECONCILE never writes or reverts
-   anything — see above). This step only runs once RECONCILE found no
-   missing CHECKPOINT.md field; if `scripts/verify.py` still fails
-   here — typically an inline `## Milestones` checkbox with an empty
-   description, which is never auto-fixed — the commit is blocked
-   (exit 1). There is nothing to restore, because nothing was touched.
-4. **RECORD** — only reached after VALIDATE passes: writes one audit
+   discover every inline-Milestones `SPEC.md` and its current
+   structural status.
+2. **VALIDATE** — re-runs `scripts/verify.py` against the same tree
+   DETECT just scanned (doc_sync.py never writes to any doc-owned
+   file, so there is nothing for this second run to have changed). If
+   anything is still MALFORMED here — typically an inline
+   `## Milestones` checkbox with an empty description, which is never
+   auto-fixed — the commit is blocked (exit 1).
+3. **RECORD** — only reached after VALIDATE passes: writes one audit
    record to `.tempest/runs/docops_<run_id>.json`
    (`schemas/execution-record.schema.json` in this repository).
-5. **STAGE** — `git add`s the new record file (plus any pruned old run
+4. **STAGE** — `git add`s the new record file (plus any pruned old run
    records). This is the only `git add` DocOps ever runs, and it never
    runs before VALIDATE has already succeeded.
 
@@ -72,8 +52,8 @@ git show <SHA> -- .tempest/runs/
 ```
 
 Because STAGE runs inside the same hook invocation that lets the commit
-proceed, the code the human staged, whichever doc-owned files RECONCILE
-touched, and the audit record itself always land in the same commit —
+proceed, the code the human staged and the audit record itself always
+land in the same commit —
 One Commit SHA Lineage, per ADR-0001.
 
 Fields worth knowing when reading a record:
@@ -82,24 +62,31 @@ Fields worth knowing when reading a record:
 |---|---|
 | `counters.scanned` | doc-owned files DETECT found this run |
 | `counters.affected` | of those, how many were MALFORMED |
-| `counters.updated` | always `0` — RECONCILE no longer writes or auto-fixes anything; a run that finds a missing field blocks the commit before RECORD is ever reached, so this field is always zero in any record that exists |
-| `token_usage` | always zero in this protocol version — reserved for a possible future AI-assisted RECONCILE mode (see ADR-0001, Reversal condition); no model call happens today |
+| `counters.updated` | always `0` — doc_sync.py never writes to a doc-owned file, so nothing is ever "updated"; kept in the schema for compatibility |
+| `token_usage` | always zero in this protocol version — no model call happens today |
 | `result` | always `"SUCCESS"` — a FAIL run never reaches RECORD, so it never produces a file to read |
 
 ## If a commit was blocked
 
-- **"staged doc-owned file(s) are missing required field(s)"** —
-  RECONCILE found a `CHECKPOINT.md` block missing one of its required
-  fields, reported as a `[DRIFT]`/`[QUESTION]` pair per field. There is
-  no auto-fix: RECONCILE writes nothing, so fix the file by hand with
-  the answer to each question, then re-stage and commit again.
-- **"scripts/verify.py still failed even though no CHECKPOINT.md field
-  was missing"** — something `scripts/verify.py` flags cannot be
-  auto-fixed (for example, an empty Milestones checkbox description).
-  Nothing was touched, so there is nothing to revert; fix the
-  underlying issue by hand and retry.
+- **"staged component(s) have an unrecognized doc structure (UNKNOWN
+  pattern)"** — the component's `SPEC.md` has no `## Milestones`
+  checklist at all. Add one with checkbox lines before committing
+  changes to it.
+- **"scripts/verify.py still failed"** — something `scripts/verify.py`
+  flags cannot be auto-fixed (for example, an empty `## Milestones`
+  checkbox description). Nothing was touched, so there is nothing to
+  revert; fix the underlying issue by hand and retry.
 
-## What this skill does not cover
+## What this skill covers, and what it doesn't
+
+`doc_sync.py` validates only the `inline_spec`/`## Milestones` pattern
+(ADR-0010, `docs/adr/0010-retire-checkpoint-md-support.md`) — a
+`CHECKPOINT.md`-based pattern was supported through V2 but is now fully
+removed, not merely deprecated, because no consuming project's own
+`scripts/verify.py` has recognized it since each independently adopted
+its own "CHECKPOINT.md pattern deprecated" decision. A `CHECKPOINT.md`
+file sitting in a repo today is inert as far as this protocol is
+concerned.
 
 Adopting a new ToolTempest version (a new `doc_sync.py`, a protocol
 change, a new field in the schema) is never automatic — see

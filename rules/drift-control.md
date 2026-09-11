@@ -1,16 +1,16 @@
 ---
 paths:
-  - "**/CHECKPOINT.md"
-  - "**/progress.txt"
+  - "**/SPEC.md"
 ---
 
 # Drift Control
 
 3-axis drift measurement to prevent straying from goals mid-work.
 
-## CHECKPOINT.md drift section format
+## Drift tracking fields
 
-Include drift tracking fields per milestone:
+Include drift tracking fields per milestone, wherever milestones are
+tracked for the active work:
 
 ```markdown
 ## M1: [milestone name]
@@ -27,15 +27,13 @@ Include drift tracking fields per milestone:
 
 ## DocOps-managed fields
 
-`scripts/doc_sync.py` (the DocOps Protocol, ADR-0001) never auto-fills
-a missing `verify:`/`done-when:`/`status:` field — not even with a
-`TODO` placeholder. A `CHECKPOINT.md` block missing one of these three
-fields blocks the commit outright (`[DRIFT]`/`[QUESTION]` per missing
-field, reported on stderr, nothing written to the file) until a human
-supplies the real value by hand. A block that made it into a commit at
-all is therefore guaranteed to already carry all three fields with
-human-authored content — there is no placeholder state to special-case
-for drift or verification purposes anymore.
+`scripts/doc_sync.py` (the DocOps Protocol) no longer manages any
+drift-tracking fields: CHECKPOINT.md support was retired entirely
+(ADR-0010, `mikkiola/tooltempest`) once every consuming project's own
+`scripts/verify.py` stopped recognizing it as a pattern. DocOps now
+validates only a `SPEC.md`'s own inline `## Milestones` checklist; the
+`verify:`/`done-when:`/`status:`/`drift:` fields above are tracked by
+convention, not enforced or auto-filled by any tool.
 
 ## Drift thresholds
 
@@ -58,7 +56,8 @@ for drift or verification purposes anymore.
 scope_drift = (unplanned changed files) / (total changed files)
 ```
 
-Unplanned file: any change to a file not listed in CHECKPOINT.md
+Unplanned file: any change to a file not listed as part of the current
+milestone's planned scope
 
 ## Constraint drift accumulation
 
