@@ -25,7 +25,15 @@
 #                                   ("well-formed, nothing to
 #                                   reconcile" would otherwise overlap
 #                                   with it).
-#   ordinary RECONCILE           -> Case 2
+#   well-formed, ordinary commit -> Case 2 (renamed from "ordinary
+#                                   RECONCILE": since RECONCILE no
+#                                   longer writes anything, ever, this
+#                                   now exercises the clean pass-through
+#                                   path instead)
+#   missing required field       -> Case 2b (single field), Case 2c
+#                                   (multiple fields) -- what "ordinary
+#                                   RECONCILE" used to cover before the
+#                                   TODO-stub auto-fill was removed
 #   staged/unstaged conflict     -> Case 3
 #   detached HEAD                -> Case 4
 #   no upstream                  -> Case 5
@@ -38,12 +46,17 @@
 # unlike reconcile.py (whose apply_tier2_sync() diff is always empty
 # by construction, making its write_text() call unreachable by git
 # state alone -- see article-pipeline's test_reconcile_error_path.py),
-# doc_sync.py's own reconcile() writes a genuinely different,
-# newly-computed CHECKPOINT.md content derived from real structural
-# findings. Every one of the seven named scenarios is reachable by
-# shaping git state and fixture content alone; no monkeypatch-based
-# test is needed here, and this suite has no Python counterpart to
+# doc_sync.py's own reconcile() re-derives missing-field findings from
+# real structural content. Every named scenario is reachable by shaping
+# git state and fixture content alone; no monkeypatch-based test is
+# needed here, and this suite has no Python counterpart to
 # test_reconcile_error_path.py.
+#
+# reconcile() no longer writes CHECKPOINT.md content at all (the
+# TODO-stub auto-fill was removed: a missing required field now blocks
+# the commit with a DRIFT/QUESTION pair instead). Cases 2b/2c/3 assert
+# byte-identical file content and an untouched .tempest/ directory for
+# exactly that reason.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -143,28 +156,66 @@ OUT1="$(run_pre_commit "$WORK1" 2>&1)" || EXIT1=$?
 echo "$OUT1" | grep -q 'no SPEC.md files found' || fail "case 1: expected no-op message, got: $OUT1"
 [ "$(record_count "$WORK1")" -eq 0 ] || fail "case 1: no run record should have been written"
 
-# --- Case 2: ordinary RECONCILE -- a staged CHECKPOINT.md missing a
-# required field, staged the ordinary way (git add && commit, index ==
-# working tree). RECONCILE must fill the field with TODO, VALIDATE
-# must then pass, and a run record must be written and staged.
+# --- Case 2: well-formed CHECKPOINT.md, ordinary unrelated edit --
+# nothing missing, so the hook must pass clean: exit 0, no
+# [DRIFT]/[QUESTION] output, CHECKPOINT.md untouched.
 WORK2="$(seed_repo case2 with-checkpoint)"
-(
-  cd "$WORK2"
-  sed -i.bak '/^- done-when:/d' CHECKPOINT.md && rm -f CHECKPOINT.md.bak
-  git add CHECKPOINT.md
-)
+CHECKPOINT2_BEFORE="$(cat "${WORK2}/CHECKPOINT.md")"
+(cd "$WORK2" && printf '\nUnrelated edit.\n' >> SPEC.md && git add SPEC.md)
 EXIT2=0
 OUT2="$(run_pre_commit "$WORK2" 2>&1)" || EXIT2=$?
 [ "$EXIT2" -eq 0 ] || fail "case 2: exit code was $EXIT2, expected 0, output: $OUT2"
-grep -q '^- done-when: TODO' "${WORK2}/CHECKPOINT.md" || fail "case 2: done-when field was not reconciled"
-git -C "$WORK2" diff --cached --name-only | grep -q '^CHECKPOINT\.md$' || fail "case 2: CHECKPOINT.md was not (re-)staged"
-[ "$(record_count "$WORK2")" -eq 1 ] || fail "case 2: expected exactly one run record written"
-git -C "$WORK2" diff --cached --name-only | grep -q '\.tempest/runs/docops_.*\.json$' || fail "case 2: run record was not staged"
+echo "$OUT2" | grep -q '\[DRIFT\]' && fail "case 2: unexpected [DRIFT] output on a well-formed file: $OUT2"
+echo "$OUT2" | grep -q '\[QUESTION\]' && fail "case 2: unexpected [QUESTION] output on a well-formed file: $OUT2"
+[ "$(cat "${WORK2}/CHECKPOINT.md")" = "$CHECKPOINT2_BEFORE" ] || fail "case 2: CHECKPOINT.md was modified but nothing was missing"
 
-# --- Case 3: genuine staged/unstaged conflict HARD BLOCK -- the staged
-# blob is itself malformed (missing "status"), AND a further unstaged
-# edit exists on top of it (index and working tree diverge). RECONCILE
-# must refuse to touch anything and block the commit.
+# --- Case 2b: a staged CHECKPOINT.md missing one required field,
+# staged the ordinary way (git add && commit, index == working tree).
+# RECONCILE no longer auto-fills a TODO stub -- it must block the
+# commit, report a [DRIFT]/[QUESTION] pair naming the missing field,
+# and leave CHECKPOINT.md byte-identical to its pre-run content.
+WORK2B="$(seed_repo case2b with-checkpoint)"
+(
+  cd "$WORK2B"
+  sed -i.bak '/^- done-when:/d' CHECKPOINT.md && rm -f CHECKPOINT.md.bak
+  git add CHECKPOINT.md
+)
+CHECKPOINT2B_BEFORE="$(cat "${WORK2B}/CHECKPOINT.md")"
+EXIT2B=0
+OUT2B="$(run_pre_commit "$WORK2B" 2>&1)" || EXIT2B=$?
+[ "$EXIT2B" -eq 1 ] || fail "case 2b: exit code was $EXIT2B, expected 1, output: $OUT2B"
+echo "$OUT2B" | grep -q '\[DRIFT\].*done-when' || fail "case 2b: expected [DRIFT] naming done-when, got: $OUT2B"
+echo "$OUT2B" | grep -q '\[QUESTION\].*done-when' || fail "case 2b: expected [QUESTION] naming done-when, got: $OUT2B"
+[ "$(cat "${WORK2B}/CHECKPOINT.md")" = "$CHECKPOINT2B_BEFORE" ] || fail "case 2b: CHECKPOINT.md was written to -- RECONCILE must never write"
+git -C "$WORK2B" diff --cached --name-only | grep -q '^CHECKPOINT\.md$' || fail "case 2b: CHECKPOINT.md should still be staged as the human left it"
+[ "$(record_count "$WORK2B")" -eq 0 ] || fail "case 2b: no run record should have been written on a blocked commit"
+[ -d "${WORK2B}/.tempest" ] && fail "case 2b: nothing should have been touched, but .tempest/ was created"
+
+# --- Case 2c: a staged CHECKPOINT.md missing MORE THAN ONE required
+# field -- one [DRIFT]/[QUESTION] pair per missing field.
+WORK2C="$(seed_repo case2c with-checkpoint)"
+(
+  cd "$WORK2C"
+  sed -i.bak -e '/^- done-when:/d' -e '/^- status:/d' CHECKPOINT.md && rm -f CHECKPOINT.md.bak
+  git add CHECKPOINT.md
+)
+EXIT2C=0
+OUT2C="$(run_pre_commit "$WORK2C" 2>&1)" || EXIT2C=$?
+[ "$EXIT2C" -eq 1 ] || fail "case 2c: exit code was $EXIT2C, expected 1, output: $OUT2C"
+echo "$OUT2C" | grep -q '\[DRIFT\].*done-when' || fail "case 2c: expected [DRIFT] naming done-when, got: $OUT2C"
+echo "$OUT2C" | grep -q '\[QUESTION\].*done-when' || fail "case 2c: expected [QUESTION] naming done-when, got: $OUT2C"
+echo "$OUT2C" | grep -q '\[DRIFT\].*status' || fail "case 2c: expected [DRIFT] naming status, got: $OUT2C"
+echo "$OUT2C" | grep -q '\[QUESTION\].*status' || fail "case 2c: expected [QUESTION] naming status, got: $OUT2C"
+
+# --- Case 3: genuine staged/unstaged conflict -- the staged blob is
+# missing "status", AND a further unstaged edit exists on top of it
+# (index and working tree diverge; scripts/verify.py's DETECT reads
+# only the working tree, so the file must still look malformed there
+# too, or DETECT would never flag it as a candidate at all -- a plain
+# comment append, not a fix, keeps it malformed on both sides). The
+# check must still block and touch nothing, and the human's unstaged
+# edit must survive exactly as it was, never silently discarded or
+# folded into a "fix".
 WORK3="$(seed_repo case3 with-checkpoint)"
 (
   cd "$WORK3"
@@ -172,11 +223,14 @@ WORK3="$(seed_repo case3 with-checkpoint)"
   git add CHECKPOINT.md
   printf '\n<!-- further unstaged edit -->\n' >> CHECKPOINT.md
 )
+CHECKPOINT3_BEFORE="$(cat "${WORK3}/CHECKPOINT.md")"
 EXIT3=0
 OUT3="$(run_pre_commit "$WORK3" 2>&1)" || EXIT3=$?
 [ "$EXIT3" -eq 1 ] || fail "case 3: exit code was $EXIT3, expected 1, output: $OUT3"
-echo "$OUT3" | grep -q 'already structurally malformed' || fail "case 3: expected HARD BLOCK message, got: $OUT3"
+echo "$OUT3" | grep -q '\[DRIFT\].*status' || fail "case 3: expected [DRIFT] naming status, got: $OUT3"
+echo "$OUT3" | grep -q '\[QUESTION\].*status' || fail "case 3: expected [QUESTION] naming status, got: $OUT3"
 echo "$OUT3" | grep -q 'CHECKPOINT.md' || fail "case 3: expected CHECKPOINT.md named in the block message"
+[ "$(cat "${WORK3}/CHECKPOINT.md")" = "$CHECKPOINT3_BEFORE" ] || fail "case 3: CHECKPOINT.md was touched -- the human's unstaged edit must survive exactly as it was"
 [ -d "${WORK3}/.tempest" ] && fail "case 3: nothing should have been touched, but .tempest/ was created"
 
 # --- Case 4: detached HEAD -- must behave identically to a normal

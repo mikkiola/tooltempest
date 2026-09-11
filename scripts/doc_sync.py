@@ -15,15 +15,18 @@ domain-specific logic of any kind.
 Design notes that are load-bearing, not incidental (see ADR-0001 for
 the full reasoning behind each):
 
-- RECONCILE is structural-only in this version: it fills a CHECKPOINT.md
-  block's missing `verify:`/`done-when:`/`status:` field with a literal
-  `TODO` placeholder. It never invents a field's *value*, and it never
-  auto-fixes an inline `## Milestones` checkbox with an empty
-  description -- that would require semantic judgment this version does
-  not make.
-- SNAPSHOT-BEFORE-MODIFY restores from an in-process snapshot, never via
-  `git checkout --`, so a human's unstaged edits that predate this run
-  are never destroyed by a VALIDATE failure.
+- RECONCILE never writes anything: a CHECKPOINT.md block missing
+  `verify:`/`done-when:`/`status:` blocks the whole commit instead,
+  staged or not, reporting a DRIFT/QUESTION pair per missing field. It
+  never invents a field's *value* -- not even an honest `TODO`
+  placeholder, since writing anything into the file without a human
+  decision authorizing that value is itself the violation (Hub Rules
+  v3.6 Rule 3). It never auto-fixes an inline `## Milestones` checkbox
+  with an empty description either, for the same reason.
+- Because RECONCILE never writes, there is nothing for a VALIDATE
+  failure to restore -- if `scripts/verify.py` still fails at VALIDATE,
+  it is for a reason RECONCILE was never going to touch (e.g. an empty
+  `## Milestones` checkbox description).
 - The execution record written by RECORD has no commit_sha field: the
   commit does not exist yet when RECORD runs.
 - STAGE (`git add`) runs exactly once, strictly after VALIDATE has
@@ -100,20 +103,6 @@ def staged_files(root: Path) -> set[str]:
     return {line for line in result.stdout.splitlines() if line}
 
 
-def unstaged_modified_files(root: Path) -> set[str]:
-    """Files with a working-tree edit not yet reflected in the index --
-    i.e. `git diff` (no --cached). Used together with staged_files() to
-    tell an ordinary `git add && git commit` (staged == working tree,
-    safe for RECONCILE to fix-and-restage) apart from a genuine partial
-    staging (index and working tree diverge -- fixing the working tree
-    and restaging it would silently discard whatever the human staged)."""
-    result = subprocess.run(
-        ["git", "diff", "--name-only"],
-        cwd=root, capture_output=True, text=True, check=True,
-    )
-    return {line for line in result.stdout.splitlines() if line}
-
-
 def staged_blob_text(root: Path, relative_path: str) -> str | None:
     """Returns the staged (git index) content of a path, or None if it
     is not staged or cannot be read as text."""
@@ -160,39 +149,34 @@ def find_checkpoint_missing_fields(text: str) -> list[dict]:
     return findings
 
 
-def apply_checkpoint_fix(text: str, findings: list[dict]) -> str:
-    """Inserts a `- <field>: TODO` stub line for each missing field,
-    directly after its block's heading line. Existing fields and all
-    other content are left untouched. Findings are applied in reverse
-    offset order so an earlier insertion never shifts a later one."""
-    for finding in sorted(findings, key=lambda f: f["insert_at"], reverse=True):
-        stub = "".join(f"- {name}: TODO\n" for name in finding["missing"])
-        pos = finding["insert_at"]
-        text = text[:pos] + stub + text[pos:]
-    return text
-
-
 def reconcile(root: Path, verify_results: list, staged: set[str]) -> dict:
-    """Structural-only RECONCILE over CHECKPOINT.md files. Never touches
-    inline `## Milestones` findings (no safe auto-fix exists for those).
+    """Structural-only check over CHECKPOINT.md files. Never writes
+    anything: a `## <heading>` block missing `verify:`/`done-when:`/
+    `status:` blocks the whole commit instead, staged or not (Hub Rules
+    v3.6 Rule 3 -- ask one specific question, don't fill the gap
+    yourself; even an honest `TODO` placeholder still fills it,
+    structurally). Never touches inline `## Milestones` findings either
+    (no safe auto-fix exists for those).
+
+    Missing fields are read from the *staged* blob when the file is
+    staged -- that is what will actually be committed -- falling back
+    to the working-tree copy `scripts/verify.py` already scanned
+    otherwise (an untouched, not-yet-staged file this commit doesn't
+    even involve).
 
     `staged` is the caller's already-collected `staged_files(root)` result
-    (the caller needs it before RECONCILE runs too, for the UNKNOWN-pattern
-    touched-component check -- passed in here rather than re-shelling out
-    to git a second time for the same data).
+    (the caller needs it before this check runs too, for the
+    UNKNOWN-pattern touched-component check -- passed in here rather
+    than re-shelling out to git a second time for the same data).
 
     Returns:
       {
-        "blocked": [relative_path, ...],   # non-empty means HARD BLOCK
-        "snapshots": {relative_path: (existed: bool, original: str|None)},
-        "modified": [relative_path, ...],
-        "scanned": int, "affected": int, "updated": int,
+        "blocked": [{"path": relative_path, "missing": [field, ...]}, ...],
+        "scanned": int, "affected": int,
       }
     When `blocked` is non-empty, no file has been touched -- the caller
-    must stop before applying anything.
+    must stop before VALIDATE.
     """
-    unstaged = unstaged_modified_files(root)
-
     scanned = 0
     affected = 0
     checkpoint_candidates: list[str] = []
@@ -208,68 +192,20 @@ def reconcile(root: Path, verify_results: list, staged: set[str]) -> dict:
         if entry.get("pattern") == "checkpoint":
             checkpoint_candidates.append(source_file)
 
-    blocked: list[str] = []
-    to_fix: list[str] = []
+    blocked: list[dict] = []
     for source_file in checkpoint_candidates:
         rel = relative_to_root(root, source_file)
-        # A plain `git add <path>` followed immediately by `git commit`
-        # (the ordinary workflow) leaves the index identical to the
-        # working tree -- rel in staged but NOT in unstaged. That is
-        # safe for RECONCILE: fixing the working tree and restaging it
-        # only replaces the staged blob with an updated copy of the same
-        # content, nothing is discarded. A genuine conflict requires the
-        # index and working tree to actually diverge (rel in BOTH staged
-        # and unstaged) -- a partial/mid-edit staging, where fixing and
-        # restaging the working tree would silently overwrite whatever
-        # the human deliberately staged with something they never saw.
-        if rel in staged and rel in unstaged:
-            staged_text = staged_blob_text(root, rel)
-            if staged_text is not None and find_checkpoint_missing_fields(staged_text):
-                blocked.append(rel)
-            # Staged version is already well-formed (or unreadable as
-            # text): the human already resolved it. Leave both the index
-            # and the further working-tree edit alone.
-            continue
-        to_fix.append(rel)
+        text = staged_blob_text(root, rel) if rel in staged else None
+        if text is None:
+            text = (root / rel).read_text(encoding="utf-8")
+        missing = sorted(
+            {name for finding in find_checkpoint_missing_fields(text) for name in finding["missing"]},
+            key=REQUIRED_FIELD_ORDER.index,
+        )
+        if missing:
+            blocked.append({"path": rel, "missing": missing})
 
-    if blocked:
-        return {
-            "blocked": blocked, "snapshots": {}, "modified": [],
-            "scanned": scanned, "affected": affected, "updated": 0,
-        }
-
-    snapshots: dict[str, tuple[bool, str | None]] = {}
-    modified: list[str] = []
-    for rel in to_fix:
-        path = root / rel
-        existed = path.is_file()
-        original = path.read_text(encoding="utf-8") if existed else None
-        findings = find_checkpoint_missing_fields(original or "")
-        if not findings:
-            continue
-        snapshots[rel] = (existed, original)
-        path.write_text(apply_checkpoint_fix(original, findings), encoding="utf-8")
-        modified.append(rel)
-
-    return {
-        "blocked": [], "snapshots": snapshots, "modified": modified,
-        "scanned": scanned, "affected": affected, "updated": len(modified),
-    }
-
-
-def restore_snapshots(root: Path, snapshots: dict, modified: list[str]) -> None:
-    """SNAPSHOT-BEFORE-MODIFY restore: rewrites each modified file back to
-    its exact pre-RECONCILE bytes, or deletes it if it did not exist
-    before RECONCILE touched it. Deliberately not `git checkout --`,
-    which would instead restore the last committed version and destroy
-    any unstaged human edits that predate this run."""
-    for rel in modified:
-        existed, original = snapshots[rel]
-        path = root / rel
-        if existed:
-            path.write_text(original, encoding="utf-8")
-        elif path.exists():
-            path.unlink()
+    return {"blocked": blocked, "scanned": scanned, "affected": affected}
 
 
 def make_run_id() -> str:
@@ -414,15 +350,18 @@ def cmd_pre_commit(root: Path) -> int:
 
     if result["blocked"]:
         print(
-            "[doc_sync pre-commit] FAIL: staged doc-owned file(s) are already structurally "
-            "malformed:",
+            "[doc_sync pre-commit] FAIL: staged doc-owned file(s) are missing "
+            "required field(s):",
             file=sys.stderr,
         )
-        for rel in result["blocked"]:
-            print(f"  - {rel}", file=sys.stderr)
+        for item in result["blocked"]:
+            for field in item["missing"]:
+                print(f"[DRIFT] {item['path']}: missing required field `{field}`", file=sys.stderr)
+                print(f"[QUESTION] What should `{field}` be?", file=sys.stderr)
         print(
-            "[doc_sync pre-commit] Resolve manually (fix the staged content, or "
-            "`git restore --staged <path>` to let DocOps reconcile it) and retry.",
+            "[doc_sync pre-commit] DocOps never invents a field's value -- not "
+            "even an honest TODO placeholder. Answer the question(s) above by "
+            "hand in the file itself, then re-stage and retry.",
             file=sys.stderr,
         )
         return 1
@@ -433,27 +372,25 @@ def cmd_pre_commit(root: Path) -> int:
     step_durations_ms["validate"] = int((time.monotonic() - t0) * 1000)
 
     if validate_exit != 0:
-        restore_snapshots(root, result["snapshots"], result["modified"])
         if validate_crashed:
             print(
                 "[doc_sync pre-commit] FAIL: scripts/verify.py did not produce "
-                "readable output after RECONCILE (structural discovery could not "
-                "run). This usually means scripts/verify.py itself is missing, "
-                "has a syntax error, or crashed -- see the error below. Restored "
-                "modified file(s) to their pre-RECONCILE snapshot -- nothing was "
-                "left half-fixed. If the error doesn't look related to anything "
-                "you changed, this is likely a bug in scripts/verify.py itself, "
-                "not your commit -- report it rather than trying to work around it.",
+                "readable output (structural discovery could not run). This "
+                "usually means scripts/verify.py itself is missing, has a "
+                "syntax error, or crashed -- see the error below. Nothing was "
+                "touched, so there is nothing to restore. If the error doesn't "
+                "look related to anything you changed, this is likely a bug in "
+                "scripts/verify.py itself, not your commit -- report it rather "
+                "than trying to work around it.",
                 file=sys.stderr,
             )
         else:
             print(
-                "[doc_sync pre-commit] FAIL: scripts/verify.py still failed after "
-                "an automatic RECONCILE pass -- likely something RECONCILE doesn't "
-                "auto-fix (e.g. an empty '## Milestones' checkbox description). "
-                "Restored modified file(s) to their pre-RECONCILE snapshot -- "
-                "nothing was left half-fixed. Fix the issue reported below in "
-                "your working tree, then re-stage and retry.",
+                "[doc_sync pre-commit] FAIL: scripts/verify.py still failed even "
+                "though no CHECKPOINT.md field was missing -- likely an inline "
+                "'## Milestones' checkbox with an empty description, which is "
+                "never auto-fixed. Fix the issue reported below in your working "
+                "tree, then re-stage and retry.",
                 file=sys.stderr,
             )
         if validate_stderr:
@@ -465,12 +402,11 @@ def cmd_pre_commit(root: Path) -> int:
     finished_wall = datetime.now(timezone.utc)
     total_duration_sec = time.monotonic() - start_perf
     counters = {
-        "scanned": result["scanned"], "affected": result["affected"], "updated": result["updated"],
+        "scanned": result["scanned"], "affected": result["affected"], "updated": 0,
     }
     timeline_summary = (
         f"Scanned {result['scanned']} doc-owned file(s); {result['affected']} structurally "
-        f"malformed; {result['updated']} reconciled (missing CHECKPOINT field(s) filled with "
-        "TODO); validate passed after reconcile."
+        "malformed; validate passed."
     )
     run_id = make_run_id()
     record_path, pruned_paths = write_record(
@@ -480,16 +416,12 @@ def cmd_pre_commit(root: Path) -> int:
     step_durations_ms["record"] = int((time.monotonic() - t0) * 1000)
 
     git_add_paths = (
-        result["modified"]
-        + [str(record_path.relative_to(root))]
+        [str(record_path.relative_to(root))]
         + [str(p.relative_to(root)) for p in pruned_paths]
     )
     subprocess.run(["git", "add", *git_add_paths], cwd=root, check=True)
 
-    print(
-        f"[doc_sync pre-commit] OK: reconciled {result['updated']} file(s); staged them plus "
-        f"{record_path.relative_to(root)}."
-    )
+    print(f"[doc_sync pre-commit] OK: staged {record_path.relative_to(root)}.")
     return 0
 
 

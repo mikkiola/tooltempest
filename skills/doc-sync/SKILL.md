@@ -22,26 +22,37 @@ does not itself modify anything.
    discover every `SPEC.md`/`CHECKPOINT.md` pair and inline-Milestones
    `SPEC.md`, and their current structural status.
 2. **RECONCILE** — for a `CHECKPOINT.md` block missing `verify:`,
-   `done-when:`, or `status:`: if that file is not already staged, the
-   missing field is added with a literal `TODO` placeholder value. If
-   the file *is* already staged and the staged content is still
-   malformed, the whole commit is blocked (exit 1) before anything is
-   touched — DocOps never silently overwrites a human's in-progress
-   staged edit. RECONCILE never invents a field's actual value, and
-   never touches an inline `## Milestones` checkbox with an empty
-   description (no safe auto-fix exists for that).
-3. **VALIDATE** — re-runs `scripts/verify.py` against the reconciled
-   tree. If it still fails, every file RECONCILE touched this run is
-   restored to its exact pre-RECONCILE content (or deleted, if it did
-   not exist before) — never via `git checkout --`, which would instead
-   discard any unstaged human edits that predate this run. The commit
-   is blocked (exit 1).
+   `done-when:`, or `status:`: DocOps writes nothing into the
+   document — staged or not. The whole commit is blocked (exit 1)
+   before anything is touched, and DocOps reports the gap instead of
+   filling it, one pair per missing field:
+
+   ```
+   [DRIFT] CHECKPOINT.md: missing required field `verify`
+   [QUESTION] What should `verify` be?
+   ```
+
+   RECONCILE never invents a field's actual value and never writes a
+   placeholder for one — not even an honest `TODO` — because writing
+   anything into the canonical document without a human decision
+   authorizing that value is itself the violation (Hub Rules v3.6 Rule
+   3: ask one specific question, don't fill the gap yourself — a
+   placeholder still fills it, structurally). It never touches an
+   inline `## Milestones` checkbox with an empty description either,
+   for the same reason.
+3. **VALIDATE** — re-runs `scripts/verify.py` against the tree,
+   unchanged from what DETECT saw (RECONCILE never writes or reverts
+   anything — see above). This step only runs once RECONCILE found no
+   missing CHECKPOINT.md field; if `scripts/verify.py` still fails
+   here — typically an inline `## Milestones` checkbox with an empty
+   description, which is never auto-fixed — the commit is blocked
+   (exit 1). There is nothing to restore, because nothing was touched.
 4. **RECORD** — only reached after VALIDATE passes: writes one audit
    record to `.tempest/runs/docops_<run_id>.json`
    (`schemas/execution-record.schema.json` in this repository).
-5. **STAGE** — `git add`s every file RECONCILE modified, plus the new
-   record file. This is the only `git add` DocOps ever runs, and it
-   never runs before VALIDATE has already succeeded.
+5. **STAGE** — `git add`s the new record file (plus any pruned old run
+   records). This is the only `git add` DocOps ever runs, and it never
+   runs before VALIDATE has already succeeded.
 
 `pre-push` runs exactly one DocOps check: `scripts/verify.py`, hard-fail
 on non-zero exit. It never modifies the working tree, stages anything,
@@ -71,21 +82,22 @@ Fields worth knowing when reading a record:
 |---|---|
 | `counters.scanned` | doc-owned files DETECT found this run |
 | `counters.affected` | of those, how many were MALFORMED |
-| `counters.updated` | of those, how many RECONCILE actually auto-fixed |
+| `counters.updated` | always `0` — RECONCILE no longer writes or auto-fixes anything; a run that finds a missing field blocks the commit before RECORD is ever reached, so this field is always zero in any record that exists |
 | `token_usage` | always zero in this protocol version — reserved for a possible future AI-assisted RECONCILE mode (see ADR-0001, Reversal condition); no model call happens today |
 | `result` | always `"SUCCESS"` — a FAIL run never reaches RECORD, so it never produces a file to read |
 
 ## If a commit was blocked
 
-- **"staged doc-owned file(s) are already structurally malformed"** —
-  RECONCILE found a conflict between what you staged and what
-  `scripts/verify.py` requires. Either fix the staged content by hand,
-  or run `git restore --staged <path>` and let RECONCILE fix it
-  automatically on the next commit attempt.
-- **"scripts/verify.py did not pass after RECONCILE"** — something
-  `scripts/verify.py` flags cannot be auto-fixed (for example, an empty
-  Milestones checkbox description). RECONCILE has already reverted its
-  own edits; fix the underlying issue by hand and retry.
+- **"staged doc-owned file(s) are missing required field(s)"** —
+  RECONCILE found a `CHECKPOINT.md` block missing one of its required
+  fields, reported as a `[DRIFT]`/`[QUESTION]` pair per field. There is
+  no auto-fix: RECONCILE writes nothing, so fix the file by hand with
+  the answer to each question, then re-stage and commit again.
+- **"scripts/verify.py still failed even though no CHECKPOINT.md field
+  was missing"** — something `scripts/verify.py` flags cannot be
+  auto-fixed (for example, an empty Milestones checkbox description).
+  Nothing was touched, so there is nothing to revert; fix the
+  underlying issue by hand and retry.
 
 ## What this skill does not cover
 

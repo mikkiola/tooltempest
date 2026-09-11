@@ -27,14 +27,15 @@ Include drift tracking fields per milestone:
 
 ## DocOps-managed fields
 
-`scripts/doc_sync.py` (the DocOps Protocol, ADR-0001) may auto-fill a
-missing `verify:`/`done-when:`/`status:` field with a literal `TODO`
-placeholder at commit time, so `CHECKPOINT.md` stays structurally valid
-even before a human has decided the real value. A `TODO` placeholder is
-not a resolved value — treat a block containing one as still requiring
-human input, and do not count it as `status: done` or as satisfying
-`done-when` for any drift or verification purpose. DocOps only ever
-writes `TODO`; it never fills in the actual field content.
+`scripts/doc_sync.py` (the DocOps Protocol, ADR-0001) never auto-fills
+a missing `verify:`/`done-when:`/`status:` field — not even with a
+`TODO` placeholder. A `CHECKPOINT.md` block missing one of these three
+fields blocks the commit outright (`[DRIFT]`/`[QUESTION]` per missing
+field, reported on stderr, nothing written to the file) until a human
+supplies the real value by hand. A block that made it into a commit at
+all is therefore guaranteed to already carry all three fields with
+human-authored content — there is no placeholder state to special-case
+for drift or verification purposes anymore.
 
 ## Drift thresholds
 
