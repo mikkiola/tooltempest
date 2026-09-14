@@ -17,10 +17,16 @@ domain-specific logic of any kind.
 Design notes that are load-bearing, not incidental (see ADR-0001 for
 the full reasoning behind each):
 
-- doc_sync.py never writes to any doc-owned file. It only validates
-  (via a consuming project's own scripts/verify.py) and blocks the
-  commit on failure -- there is nothing to snapshot or restore, because
-  nothing is ever modified.
+- doc_sync.py's own Tier 1 flow (this file) never writes to any
+  doc-owned file. It only validates (via a consuming project's own
+  scripts/verify.py) and blocks the commit on failure -- there is
+  nothing for *this file's own flow* to snapshot or restore, because
+  Tier 1 never modifies anything. restore_snapshots() below still
+  lives in this module as a shared, generic primitive: Tier 2
+  (scripts/doc_sync_tier2.py), which does write doc-owned files, needs
+  it for its own apply/rollback path and already depends on this
+  module for relative_to_root()/repo_root() the same way. Tier 1 never
+  calls it itself.
 - The execution record written by RECORD has no commit_sha field: the
   commit does not exist yet when RECORD runs.
 - STAGE (`git add`) runs exactly once, strictly after VALIDATE has
@@ -90,6 +96,37 @@ def staged_files(root: Path) -> set[str]:
 
 def relative_to_root(root: Path, absolute_path: str) -> str:
     return str(Path(absolute_path).resolve().relative_to(root))
+
+
+def restore_snapshots(root: Path, snapshots: dict, modified: list[str]) -> None:
+    """SNAPSHOT-BEFORE-MODIFY restore: rewrites each modified file back to
+    its exact pre-modification bytes, or deletes it if it did not exist
+    before this invocation touched it. Deliberately not `git checkout
+    --`, which would instead restore the last committed version and
+    destroy any unstaged human edits that predate this run.
+
+    Generic by design -- carries no CHECKPOINT.md-specific or Tier-
+    specific logic of any kind (restored verbatim from before ADR-0010;
+    see docs/adr/0011-restore-restore-snapshots-for-tier2.md). doc_sync.py's
+    own Tier 1 flow never modifies a doc-owned file and so never calls
+    this itself -- it lives here as a shared primitive because
+    doc_sync_tier2.py's apply_tier2_sync() rollback path depends on it,
+    the same way both modules already share relative_to_root()/repo_root().
+
+    Args:
+      snapshots: {relative_path: (existed: bool, original: str | None)},
+        as produced by a caller's own snapshot step (e.g.
+        doc_sync_tier2.snapshot_tier2_docs()).
+      modified: relative paths, a subset of snapshots' keys, that this
+        invocation actually wrote and now needs rolled back.
+    """
+    for rel in modified:
+        existed, original = snapshots[rel]
+        path = root / rel
+        if existed:
+            path.write_text(original, encoding="utf-8")
+        elif path.exists():
+            path.unlink()
 
 
 def make_run_id() -> str:
