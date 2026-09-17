@@ -390,17 +390,17 @@ many, whether they were unanimous) or if it came from a prior,
 undocumented session being formalized after the fact.
 ```
 
-**Note (added when this Bible was vendored to tooltempest, 2026-08-26):**
+**Note (added when this document was vendored to tooltempest, 2026-08-26):**
 tooltempest's own ADRs (0001-0008) do not carry the `---` frontmatter
 block shown above — they use the same six/seven prose blocks (`Status`
 / `Context & Constraints` / `Decision` / `Alternatives & Rationale` /
 `Consequences` / `Confirmation & Revisit` / `Source`) starting directly
 from the `# ADR-NNNN: Title` heading, with no YAML metadata. This is a
-per-project formatting choice, not a violation of this Bible's format
+per-project formatting choice, not a violation of this document's format
 — see this document's own "Existing ADRs are not retroactively
 migrated" rule below. A new ADR in any project follows whichever
 concrete shape that project's own most recent accepted ADR already
-uses; check it directly before writing, don't assume this Bible's
+uses; check it directly before writing, don't assume this document's
 literal frontmatter example is mandatory where a project has already
 established a working alternative.
 
@@ -584,7 +584,7 @@ complete just because the rewrite happened:
    was thorough.
 2. **The new structure is actually followed**, not just superficially
    similar — the right document has the right sections, in the right
-   format, answering the right questions (per this bible's own
+   format, answering the right questions (per this document's own
    structure for that document type) — not prose that happens to
    mention the right topics in the wrong shape.
 3. **Cross-document consistency** — no fact contradicts itself between
