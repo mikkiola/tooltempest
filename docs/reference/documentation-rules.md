@@ -16,6 +16,7 @@ project-specific, that is marked explicitly.
 
 ```
 CONSTITUTION   → how to work
+PROJECT        → why the system exists and what it must prove
 ARCHITECTURE   → what exists right now
 ROADMAP        → where we're going
 BACKLOG        → what to do next, concretely
@@ -26,10 +27,10 @@ ADR            → why a decision was made (permanent, one per decision)
 **Single source of truth per level.** No fact lives in two documents.
 If a fact could go in two places, it goes in exactly one — usually the
 most specific one — and the other document points to it instead of
-repeating it. This is the single most important rule governing all six
-document types: violating it causes documentation drift, where an
-agent updates one copy and forgets the other, and after a few sessions
-the two copies silently disagree.
+repeating it. This is the single most important rule governing all
+seven document types: violating it causes documentation drift, where
+an agent updates one copy and forgets the other, and after a few
+sessions the two copies silently disagree.
 
 ---
 
@@ -50,11 +51,13 @@ order:**
 1. **Role** — what is Claude/the agent doing in this project, at what
    level of autonomy.
 2. **Session protocol** — what happens at the start of a session (what
-   gets read, what gets stated before work begins), and — where
-   applicable — the project's explicit session-end mechanism (e.g. an
-   owner-triggered command, not autonomous agent judgment; autonomous
-   "session is over" detection has been tried and found impractical in
-   practice — see article-pipeline's [B-043]).
+   gets read, what gets stated before work begins), stated as an
+   explicit reading order (e.g. `CONSTITUTION → PROJECT → ARCHITECTURE →
+   ROADMAP → BACKLOG`, per article-pipeline's own CONSTITUTION.md), and
+   — where applicable — the project's explicit session-end mechanism
+   (e.g. an owner-triggered command, not autonomous agent judgment;
+   autonomous "session is over" detection has been tried and found
+   impractical in practice — see article-pipeline's [B-043]).
 3. **Keeping documents current** — the autonomous-update rule: whenever
    a task's outcome makes ARCHITECTURE.md/ROADMAP.md/README.md content
    stale, the agent updates it directly as part of that task, not as a
@@ -144,7 +147,80 @@ it were the only one that ever existed.
 
 ---
 
-## 2. ARCHITECTURE.md
+## 2. PROJECT.md
+
+**Applies to:** tracked project repositories only (article-pipeline,
+Brain, Radar, Archi-kg) — not infrastructure/tooling repositories
+(ToolTempest, Collector, Analyzer, radar-vault), which have no
+system-level goal or outcome of their own to state. This mirrors the
+project/tool split `mikkiola/analyzer`'s own `SPEC.md` already
+establishes for goal tracking generally (tracked projects carry a goal
+via their own `docs/ROADMAP.md` Current Pointer; tools/infra are
+explicitly out of goal tracking, on the reasoning that a small,
+single-purpose tool consuming another repo's output has no goal of its
+own to drift from) — PROJECT.md is this ecosystem's system-level
+counterpart to that same, already-established split, not a new one
+invented here. A tooling repository that later grows a system-level
+goal of its own (rather than remaining purely a mechanism consumed by
+others) would be the trigger to reclassify it and add a PROJECT.md —
+not a default.
+
+**Purpose:** why the system exists — its goal and the single, narrowest
+outcome it can actually prove about itself by its own operation, a
+top-level current-vs-target framing, a channel/component-agnostic
+Definition of Done, and explicit boundaries with other systems this
+project depends on or sits adjacent to. States the system's reason for
+existing, not its current state or its plan.
+
+**What must NOT be here:** per-component status (→ ARCHITECTURE.md),
+phases/sequencing (→ ROADMAP.md), task detail (→ BACKLOG.md), rationale
+for a decision (→ docs/adr/). This document states only what none of
+those four are structured to hold — the system's reason for existing
+and what it can prove, not its current state or plan.
+
+**Structure — every PROJECT.md answers these questions (per
+article-pipeline's own `docs/PROJECT.md`, the reference example):**
+1. **System Goal** — one paragraph stating what the system does and for
+   whom, in outcome terms, not implementation terms.
+2. **System Outcome** — the single, narrowest outcome the system can
+   actually prove about itself by its own operation, stated precisely
+   enough to exclude claims the system cannot verify (e.g.
+   article-pipeline's own `docs/PROJECT.md` states it can prove content
+   was generated from real work and published with no manual step, but
+   explicitly cannot prove the content was seen, read, or led to any
+   external result — and says so, rather than leaving that boundary
+   implicit).
+3. **Current vs. Target (top-level)** — a short, coarse summary of
+   where the system stands today versus where it is ultimately meant to
+   land; points to ARCHITECTURE.md/ROADMAP.md for the actual detail
+   rather than restating it.
+4. **Definition of Done** — one channel/component-agnostic bar that
+   applies uniformly to whatever the system's target units are (a
+   content channel, a data source, a processing stage), written so that
+   adding a new unit never requires rewriting this definition; which
+   units are currently claimed against that bar, and each one's status,
+   lives in ARCHITECTURE.md/ROADMAP.md, not here.
+5. **Boundary statements** — one short section per adjacent or
+   depended-on system, naming it explicitly and stating that this
+   repository does not implement, track, or duplicate that system's own
+   goal model, data, or state; a task touching that concern belongs in
+   the other system's own repository and specification, not here.
+
+**How to maintain it:** edited rarely, deliberately, like
+CONSTITUTION.md — it states why the system exists, not its current
+state, so it shouldn't change as a side effect of routine work. Changes
+to which channels/components exist, or their status, go in
+ARCHITECTURE.md/ROADMAP.md, never here.
+
+**Rules for edits:** treat as append-mostly, the same discipline as
+CONSTITUTION.md. When a stated goal, outcome, or Definition of Done is
+superseded, say so in place with a dated note rather than silently
+deleting the old text — this document has its own history worth
+preserving, not a record that gets silently rewritten.
+
+---
+
+## 3. ARCHITECTURE.md
 
 **Purpose:** current state and dependencies of the system — what
 exists right now, its status, what it depends on, how it was validated,
@@ -199,7 +275,7 @@ log` for this file, not inside the file itself.
 
 ---
 
-## 3. ROADMAP.md
+## 4. ROADMAP.md
 
 **Purpose:** phases, sequencing, dependencies, and the current
 execution pointer — nothing else. A short navigational layer, not a
@@ -261,7 +337,7 @@ has leaked in from BACKLOG.md and should be moved back out.
 
 ---
 
-## 4. BACKLOG.md
+## 5. BACKLOG.md
 
 **Purpose:** open tasks and owner decisions needed — everything
 concrete enough to act on, in priority order.
@@ -329,7 +405,7 @@ rather than to unverifiable external material.
 
 ---
 
-## 5. `docs/adr/` (Architecture Decision Records)
+## 6. `docs/adr/` (Architecture Decision Records)
 
 **Purpose:** why a decision was made — permanent record of context,
 options considered, what was chosen, and consequences. One file per
@@ -469,7 +545,7 @@ expectation. BACKLOG.md is exempt (see BACKLOG.md's own section above).
 
 ---
 
-## 6. `docs/adr/ADR-INDEX.md`
+## 7. `docs/adr/ADR-INDEX.md`
 
 **Purpose:** a generated, browsable index of every ADR — number,
 title, status, supersession relationships — so a reader doesn't have to
@@ -511,7 +587,7 @@ the source ADR files' frontmatter, never a hand-patch to
 README.md gets the same "autonomous update, no confirmation gate"
 treatment as ARCHITECTURE.md and ROADMAP.md — whenever a task's outcome
 makes README.md's content stale, it's updated directly as part of that
-task. This does NOT make it a fifth/seventh canonical top-level
+task. This does NOT make it a seventh canonical top-level
 document with its own dedicated rules section; it's governed by the
 same principle CONSTITUTION.md states once, applied to one more file.
 
