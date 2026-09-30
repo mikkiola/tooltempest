@@ -15,8 +15,11 @@ project-specific, that is marked explicitly.
 ## The chain of authority — read this first
 
 ```
+SYSTEM_GOALS   → ecosystem-wide strategic goal registry (owner-controlled,
+                 workspace root, outside any single repo — see below)
 CONSTITUTION   → how to work
 PROJECT        → why the system exists and what it must prove
+CURRENT_MISSION → current operational workstream, where adopted (see below)
 ARCHITECTURE   → what exists right now
 ROADMAP        → where we're going
 BACKLOG        → what to do next, concretely
@@ -31,6 +34,22 @@ repeating it. This is the single most important rule governing all
 seven document types: violating it causes documentation drift, where
 an agent updates one copy and forgets the other, and after a few
 sessions the two copies silently disagree.
+
+**`SYSTEM_GOALS.md` and `CURRENT_MISSION.md` (Mission Harness, added
+2026-09-30).** `SYSTEM_GOALS.md` is one ecosystem-wide, owner-controlled
+strategic goal registry — stable IDs, written in Russian, kept at the
+shared workspace root (`~/Dev/github.com/mikkiola/SYSTEM_GOALS.md`), not
+inside any single repo and never duplicated into one. `CURRENT_MISSION.md`
+is a per-repository operational file holding the single active workstream
+(`NOW`/`CURRENT STEP`/`DONE WHEN`/`IN SCOPE`/`OUT OF SCOPE`/`BLOCKERS`/
+`STATUS`), referencing `SYSTEM_GOALS.md` by stable goal ID rather than
+duplicating goal text. As of this writing, adopted in `article-pipeline`,
+`brain`, and `radar` only — not yet a requirement for every project in
+this ecosystem. Where adopted, `CURRENT_MISSION.md` is the operational
+authority for current work; `ROADMAP.md`'s Current Pointer remains
+sequencing/planning context and may lag behind it without being rewritten
+to match. Each adopting project's own `CONSTITUTION.md` states the full
+rule set for this layer; this document states only that the layer exists.
 
 ---
 
@@ -164,6 +183,22 @@ invented here. A tooling repository that later grows a system-level
 goal of its own (rather than remaining purely a mechanism consumed by
 others) would be the trigger to reclassify it and add a PROJECT.md —
 not a default.
+
+**Dated note (2026-09-30, Mission Harness).** The paragraph above's
+"tracked projects carry a goal via their own `docs/ROADMAP.md` Current
+Pointer" premise is now accurate only for `Analyzer`'s own reading
+mechanism, and for any tracked project without a `CURRENT_MISSION.md`.
+`article-pipeline`, `Brain`, and `Radar` now carry their current goal
+via `CURRENT_MISSION.md`'s `GOAL` field — a stable ID into
+`SYSTEM_GOALS.md` — not via `docs/ROADMAP.md`'s Current Pointer.
+`Analyzer`'s own `SPEC.md` still reads the older Current-Pointer
+mechanism as its goal-of-record for these three projects; this is a
+known, flagged inconsistency between Analyzer's implementation and the
+three projects' actual current-goal source, not corrected here — fixing
+it is a separate Analyzer implementation task, not a documentation-only
+change. The original paragraph above is left as-is, describing the
+mechanism that predated this note, per this document's own append-only
+convention.
 
 **Purpose:** why the system exists — its goal and the single, narrowest
 outcome it can actually prove about itself by its own operation, a
