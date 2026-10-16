@@ -8,10 +8,9 @@ allowed-tools: Read, Bash, Grep, Edit
 
 # Code Verification
 
-> Identical to the verification the TaskCompleted hook (`verify-task-quality.sh`) runs automatically.
-> Use this skill when the hook does not fire (manual verification requests, environments without the hook installed).
+> This is a prompt-based verification procedure. Run it for manual requests or through a verified integration; do not assume an automatic hook ran it.
 
-Verifies code after task completion. Run in order; proceed to the next step only after the current one passes.
+Verifies code after task completion. Run applicable checks in order; do not proceed past an unresolved required-check failure. Report later unexecuted checks as SKIP.
 
 ## Step 1: Project Detection
 
@@ -29,6 +28,14 @@ Verifies code after task completion. Run in order; proceed to the next step only
 [ -f go.mod ] && echo "Go project detected"
 [ -f Cargo.toml ] && echo "Rust project detected"
 ```
+
+### Select checks and retain their evidence
+
+Use the task/specification and project configuration to select applicable checks; the table lists examples, not a universal coverage requirement. Discovery alone is not verification, and the discovery block's exit code is not a check verdict. Mark a category N/A only with evidence that it is outside the applicable scope; a missing tool or unsupported category is SKIP, not N/A.
+
+Run each selected command and each underlying suite independently. Choose applicable alternatives from the examples rather than executing every stack's command. Record each actual exit code and diagnostic immediately; a later command, retry, summary line, or successful outer wrapper must not overwrite an unresolved underlying failure. A retry clears only the same check's failure after a successful rerun against the current state. If a wrapper does not expose its underlying results, report that verification as SKIP (unverified).
+
+For tests, record executed/pass/fail/skip counts from the runner when available. For an applicable test check, zero tests executed is SKIP, not PASS, even if the runner exits 0. Unexecuted applicable tests are coverage gaps: report partial execution as SKIP with the passed/failed/skipped counts. Missing, ambiguous, or invalid result evidence is SKIP (unverified), never PASS.
 
 ## Step 2: Verification Order (fix immediately on failure)
 
@@ -54,7 +61,7 @@ On failure: try `--fix` auto-fix → manual fix → re-run.
 # Vitest
 npx vitest run
 # Jest
-npx jest --passWithNoTests
+npx jest
 # pytest
 pytest -q
 ```
@@ -68,46 +75,57 @@ On failure: analyze build errors → fix → re-run.
 
 ### 2-5. Circular Dependency Detection (JS/TS projects)
 ```bash
-npx madge --circular --extensions ts,tsx src/ 2>/dev/null
+npx madge --circular --extensions ts,tsx src/
 ```
 If circular dependencies are found: report as WARNING. Only newly introduced cycles are fix targets.
 
 ### 2-6. Dead Code Detection (JS/TS projects)
 ```bash
-npx knip --no-exit-code 2>/dev/null | head -50
+npx knip --no-exit-code
 ```
 If unused exports/files/dependencies are found: report as INFO. Do not auto-fix.
 
 ### 2-7. Secret Scan
 ```bash
-gitleaks detect --source . --no-git -v 2>&1 | head -20
+gitleaks detect --source . --no-git -v 2>&1
 ```
-If secrets are found: CRITICAL. Report immediately and drive a fix.
+If secrets are found: CRITICAL. Report immediately and drive a fix. PASS requires a completed scan with exit code 0 and no findings. A scanner execution failure is FAIL; retain its actual exit code and diagnostic.
 
 ### 2-8. AI Slop Pattern Detection (ast-grep)
+Run the two pattern checks separately and retain each result.
+
 ```bash
 # Unnecessary console.log
-sg --pattern 'console.log($$$)' --lang ts src/ 2>/dev/null | head -10
-# any type usage
-sg --pattern '$A as any' --lang ts src/ 2>/dev/null | head -10
+sg --pattern 'console.log($$$)' --lang ts src/
 ```
-If found: report as WARNING.
+
+```bash
+# any type usage
+sg --pattern '$A as any' --lang ts src/
+```
+If found: report as WARNING. Distinguish documented finding/no-match exits from tool execution errors using diagnostics; findings remain advisory, but a tool execution error is FAIL. Apply the same distinction to circular and dead-code checks. An ambiguous outcome is SKIP (unverified).
 
 ## Step 3: Result Report
 
 | Step | Status | Details |
 |------|--------|---------|
-| typecheck | PASS/FAIL/SKIP | Error count or "tool not detected" |
-| lint | PASS/FAIL/SKIP | Warning/error count |
-| test | PASS/FAIL/SKIP | N passed, M failed |
-| build | PASS/FAIL/SKIP | Success or error summary |
-| circular | PASS/WARN/SKIP | Circular dependency count (madge) |
-| deadcode | INFO/SKIP | Unused export/file count (knip) |
-| secrets | PASS/CRITICAL/SKIP | Detected secret count (gitleaks) |
-| ai-slop | PASS/WARN/SKIP | console.log/any count (ast-grep) |
+| typecheck | PASS/FAIL/SKIP/N/A | Command, actual exit, diagnostic or gap/exclusion reason |
+| lint | PASS/FAIL/SKIP/N/A | Command, actual exit, warning/error count or gap/exclusion reason |
+| test | PASS/FAIL/SKIP/N/A | Command, actual exit, executed/passed/failed/skipped counts or gap/exclusion reason |
+| build | PASS/FAIL/SKIP/N/A | Command, actual exit, diagnostic or gap/exclusion reason |
+| circular | PASS/WARN/FAIL/SKIP/N/A | Command, actual exit, cycle count or diagnostic/gap/exclusion reason |
+| deadcode | INFO/FAIL/SKIP/N/A | Command, actual exit, unused export/file count or diagnostic/gap/exclusion reason |
+| secrets | PASS/CRITICAL/FAIL/SKIP/N/A | Command, actual exit, finding count or diagnostic/gap/exclusion reason |
+| ai-slop | PASS/WARN/FAIL/SKIP/N/A | Each command and actual exit, finding counts or diagnostic/gap/exclusion reason |
 
-**Verdict**: PASS = exit code 0, FAIL = 3 retries exhausted, SKIP = tool not detected
-**Overall verdict**: Any CRITICAL → FAIL. All PASS/WARN/INFO/SKIP → PASS. Any FAIL among typecheck/lint/test/build → FAIL.
+**Individual results:** PASS requires executed, validated success; a test check with zero applicable tests executed cannot PASS, and missing underlying results cannot establish PASS for any check. A known failed check is FAIL while unresolved, including before retries are exhausted. SKIP means not run, unsupported, partially executed, or unverified; always state which and why. N/A is an evidenced scope exclusion. Confirmed advisory findings retain WARN/INFO.
+
+**Overall verdict (in this order):**
+1. Any unresolved FAIL or CRITICAL → FAIL.
+2. Otherwise, any applicable SKIP or missing/ambiguous/invalid result, no relevant checks executed, or an applicable test check executed zero tests → INCOMPLETE.
+3. Otherwise → PASS for the explicitly listed verified scope only. WARN/INFO may coexist with PASS when they represent validated advisory findings. N/A exclusions do not count as executed or passed checks.
+
+State the verified scope and all coverage gaps/exclusions. Do not claim full project verification from a subset, or infer coverage from command presence or a summary line. This skill produces a report, not its own executable exit code; report measured command/suite exits separately. If an integration maps this report to an exit status, FAIL and INCOMPLETE must map to nonzero; verify that mapping rather than assuming an outer exit 0 proves success.
 
 ## Fix Strategy by Error Category
 
