@@ -1,0 +1,48 @@
+# ToolTempest maintainer entry point
+
+ToolTempest is the client-agnostic source for shared tooling primitives, not a
+consumer installation or an adapter. Read [README](README.md) for composition,
+lifecycle and scope, [docs/adr](docs/adr/) for decisions, and
+[documentation rules](docs/reference/documentation-rules.md) for shared document
+authority. This maintainer navigation file is not a distributable primitive.
+
+## Source and distribution boundaries
+
+- [MANIFEST.txt](MANIFEST.txt) is the consumer file list. Preserve its distinction
+  between shared mechanisms and reference documents; reference docs are not
+  installed as client rules.
+- `skills/` and `rules/` contain canonical shared source. They are not this
+  project's active skills/settings. Do not copy them into `.claude/` here.
+- `scripts/` contains DocOps code and the independent manifest validator;
+  `schemas/` contains protocol schemas. No consumer-specific integration code,
+  account configuration or private runtime state belongs in this repository.
+- A source change does not repin, install or activate anything for consumers.
+  Preserve explicit source-selection and delivery decisions separately.
+
+Retain the existing no-client-specific-directory boundary: add no `.claude/`,
+adapter scaffolding, copied consumer workflow, project agent or duplicate shared
+skill merely for uniformity. This project uses its existing README/ADR/reference
+structure; do not fabricate a five-document canon or owner goal registry.
+
+## Offline verification
+
+For maintainer-instruction edits, check links, exact scope and `git diff --check`.
+The existing independent completeness command is:
+
+```bash
+python3 scripts/check_manifest.py
+```
+
+Run it after changes to composition paths and keep the manifest consistent in
+the same change. It compares tracked composition paths; an untracked file there
+still needs review and inclusion before publication.
+
+[tests/test-doc-sync.sh](tests/test-doc-sync.sh) exercises DocOps hook modes in
+fixture repositories. It is not permitted by a no-hook-execution task; do not
+run it or production `doc_sync.py` modes just to validate Markdown. Reuse prior
+results for unchanged source. Shared `/verify` text is source to review here,
+not authorization for a live model-backed invocation.
+
+Keep implementation preparation separate from permission to commit/publish it.
+Do not change consumer locks, global installed files, hooks, permissions or MCP
+configuration during project-instruction work.
