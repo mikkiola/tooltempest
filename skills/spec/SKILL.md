@@ -129,7 +129,7 @@ After writing the specification, tell the user:
 >
 > After implementation is complete, verify with:
 > ```
-> /spec-verify
+> /verify
 > ```
 
 ## Core Principles
