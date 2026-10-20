@@ -34,6 +34,13 @@ This is Anthropic engineer Thariq's SPEC-based development workflow.
 
 ## Workflow
 
+### Step 0: Read Governing Instructions and Check Conflicts
+
+Before creating or updating a SPEC, read the applicable Constitution and ADRs.
+Constitution and ADR have higher authority than SPEC. Identify conflicts and
+raise them to the Owner for resolution rather than silently choosing an
+interpretation. Do not encode an unresolved conflict as a new requirement.
+
 ### Step 1: Check for or Create SPEC.md
 
 Check whether SPEC.md exists in the current directory.
