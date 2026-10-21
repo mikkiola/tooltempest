@@ -1,0 +1,433 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mikkiola/tooltempest/schemas/docops-result.schema.json",
+  "title": "DocOps checker result",
+  "description": "Output of scripts/docops.py check (schema_version 1). One document per invocation; one entry per inspected snapshot. Each check dimension has its own status; there is deliberately no single overloaded PASS/FAIL. Per-check statuses are exactly PASS, FAIL, SKIP, N/A. In this version only SPEC_STRUCTURE is evaluated; the remaining dimensions carry `assessed: false` and a reason (no `status` key) and say nothing about tests, documentation impact, review, acceptance, publication or owner acceptance. A failure of the checker itself (Git cannot read the snapshot, invalid policy, internal error) is not a status: the snapshot carries an `error` object instead of `checks`, its status is null and the exit code is 2. See ADR-0013.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "tool",
+    "command",
+    "repository",
+    "snapshots",
+    "summary"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version"
+      ],
+      "properties": {
+        "name": {
+          "const": "docops"
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Checker version. null only when the checker package could not be imported."
+        }
+      }
+    },
+    "command": {
+      "enum": [
+        "check",
+        "report",
+        null
+      ]
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root"
+      ],
+      "properties": {
+        "root": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "snapshots": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/snapshotResult"
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "exit_code",
+        "tool_errors"
+      ],
+      "properties": {
+        "status": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/specStatus"
+            }
+          ],
+          "description": "null whenever any tool failure occurred: partial results are never summarised as a verdict."
+        },
+        "exit_code": {
+          "enum": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "description": "0 PASS/N/A, 1 FAIL, 2 tool failure, 3 SKIP."
+        },
+        "tool_errors": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reason": {
+          "type": "string",
+          "description": "Present when the run failed before any snapshot could be evaluated."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "specStatus": {
+      "enum": [
+        "PASS",
+        "FAIL",
+        "N/A",
+        "SKIP"
+      ]
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message",
+        "line"
+      ],
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "line": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        }
+      }
+    },
+    "track": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "track",
+        "path",
+        "state",
+        "status",
+        "reason",
+        "milestones",
+        "diagnostics"
+      ],
+      "properties": {
+        "track": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "active",
+            "idle",
+            "unknown"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/specStatus"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "milestones": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "total",
+            "checked",
+            "unchecked"
+          ],
+          "properties": {
+            "total": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "checked": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "unchecked": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/diagnostic"
+          }
+        }
+      }
+    },
+    "specStructure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "reason",
+        "policy",
+        "tracks",
+        "diagnostics"
+      ],
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/specStatus"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source",
+            "path"
+          ],
+          "properties": {
+            "source": {
+              "enum": [
+                "default",
+                "snapshot",
+                "none",
+                "unknown"
+              ]
+            },
+            "path": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "tracks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/track"
+          }
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/diagnostic"
+          },
+          "description": "Check-level warnings, e.g. OUT_OF_SCOPE_SPEC."
+        }
+      }
+    },
+    "snapshotResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request",
+        "snapshot",
+        "checks",
+        "error",
+        "status",
+        "exit_code"
+      ],
+      "properties": {
+        "request": {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "index",
+                "rev",
+                "deleted-ref",
+                "invalid-update"
+              ]
+            }
+          }
+        },
+        "snapshot": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "commit",
+            "tree",
+            "index_digest"
+          ],
+          "description": "Identity of exactly what was inspected. commit/tree for a commit snapshot; index_digest (sha256 over the sorted mode/oid/stage/path entries) for the index.",
+          "properties": {
+            "kind": {
+              "enum": [
+                "index",
+                "commit",
+                "deleted-ref",
+                "unresolved"
+              ]
+            },
+            "commit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "tree": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "index_digest": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "checks": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "SPEC_STRUCTURE",
+                "TESTS",
+                "DOC_IMPACT_ASSESSMENT",
+                "DOC_CONSISTENCY_REVIEW",
+                "ACCEPTANCE_VERIFICATION",
+                "PUBLICATION",
+                "OWNER_ACCEPTANCE"
+              ],
+              "properties": {
+                "SPEC_STRUCTURE": {
+                  "$ref": "#/$defs/specStructure"
+                },
+                "TESTS": {
+                  "$ref": "#/$defs/notAssessed"
+                },
+                "DOC_IMPACT_ASSESSMENT": {
+                  "$ref": "#/$defs/notAssessed"
+                },
+                "DOC_CONSISTENCY_REVIEW": {
+                  "$ref": "#/$defs/notAssessed"
+                },
+                "ACCEPTANCE_VERIFICATION": {
+                  "$ref": "#/$defs/notAssessed"
+                },
+                "PUBLICATION": {
+                  "$ref": "#/$defs/notAssessed"
+                },
+                "OWNER_ACCEPTANCE": {
+                  "$ref": "#/$defs/notAssessed"
+                }
+              }
+            }
+          ],
+          "description": "null exactly when `error` is set."
+        },
+        "status": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/specStatus"
+            }
+          ],
+          "description": "Aggregate of the evaluated dimensions (currently SPEC_STRUCTURE only); null when `error` is set."
+        },
+        "exit_code": {
+          "enum": [
+            0,
+            1,
+            2,
+            3
+          ]
+        },
+        "error": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "description": "Set when the checker could not evaluate this snapshot (tool failure). Not a SPEC finding."
+        }
+      }
+    },
+    "notAssessed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assessed",
+        "reason"
+      ],
+      "description": "A dimension this version does not assess. It has no `status`: the per-check vocabulary is exactly PASS, FAIL, SKIP, N/A.",
+      "properties": {
+        "assessed": {
+          "const": false
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

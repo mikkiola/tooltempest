@@ -41,6 +41,20 @@ config directory. See `docs/adr/0001-docops-protocol.md` for the full
 protocol contract and the scope-boundary reasoning for why this addition
 does not compromise client independence (below).
 
+DocOps checker (added by ADR-0013 — `docs/adr/0013-docops-checker-spec-state-marker.md`;
+source only, not yet adopted by any consumer, which keep using `doc_sync.py`
+until they migrate):
+- `scripts/docops.py` — read-only `check` / `report` of an exact Git snapshot
+  (`--tree index|<commit>`, `--push-stdin`); never writes, stages, commits,
+  pushes or uses the network
+- `scripts/docops_core/` — the standard-library package behind it
+- `schemas/docops-result.schema.json`, `schemas/docops-policy.schema.json`
+
+It checks SPEC structure only; the other result dimensions are
+reported as `assessed: false` (they carry no status). A SPEC declares "no active task" in its frontmatter
+(`---` / `spec-state: idle` / `---` at the top of the file); a failure of
+the checker itself exits 2 and is never a PASS or N/A. Tests: `python3 -m unittest discover -s tests/docops -t tests/docops`.
+
 ## Reference documentation (added by ADR-0008)
 
 A separate category from the seven mechanism files above:
