@@ -39,7 +39,7 @@ are excluded):
   * an indented heading (`##` after one to three spaces), which Markdown
     may place inside the preceding list item;
   * a level-1 or level-2 heading whose title contains markup (`*`, `_`,
-    a backtick, `[`, `]`, `&`, `<`): Markdown renders the title, so the
+    a backtick, `[`, `]`, `&`, `<`, `~`): Markdown renders the title, so the
     literal text no longer says what the heading is, and a section
     boundary or a second "Milestones" could hide behind it;
   This applies to the whole document, not only the Milestones section.
@@ -102,7 +102,7 @@ _FENCE_LIKE_RE = re.compile(
 )
 _ATX_RE = re.compile(r"^(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$")
 _INDENTED_HEADING_RE = re.compile(r"^ {1,3}#{1,6}(?:[ \t]|$)")
-_HEADING_MARKUP_RE = re.compile(r"[*_`\[\]&<]")
+_HEADING_MARKUP_RE = re.compile(r"[*_`\[\]&<~]")
 _MILESTONES_TITLE_RE = re.compile(r"^Milestones(?:$|[\s(:])")
 _HTML_RE = re.compile(r"<[A-Za-z/!?]")
 _BLOCKQUOTE_RE = re.compile(r"^ {0,3}>")
@@ -401,7 +401,7 @@ def _analyze_body(lines: List[str], first_number: int, diagnostics: List[Diagnos
             if level <= 2 and _HEADING_MARKUP_RE.search(title):
                 out.add("DENIED_HEADING_MARKUP",
                         "level-1 and level-2 heading titles must be plain text: markup "
-                        "(* _ ` [ ] & <) changes what Markdown renders as the heading", number)
+                        "(* _ ` [ ] & < ~) changes what Markdown renders as the heading", number)
             if level <= 2:
                 in_milestones = False
                 if level == 2 and _MILESTONES_TITLE_RE.match(title):

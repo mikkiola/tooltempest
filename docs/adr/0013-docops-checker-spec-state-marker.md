@@ -128,7 +128,7 @@ no lock is repinned in this stage.
      it would not end the Milestones section; headings must start at
      column 0;
    - a level-1 or level-2 heading whose title contains markup: `*`, `_`,
-     a backtick, `[`, `]`, `&` or `<` (`DENIED_HEADING_MARKUP`). Markdown
+     a backtick, `[`, `]`, `&`, `<` or `~` (`DENIED_HEADING_MARKUP`). Markdown
      renders the title, so `## **Milestones**` or `## &#77;ilestones`
      is a second Milestones heading that a literal title match would
      miss, and a damaged item under it would go unchecked. Titles of
@@ -273,7 +273,9 @@ stage's receipts.
 - **SPEC.md as a document class no longer supports HTML comments, HTML
   tags, blockquotes, nested lists or lines indented four or more
   columns, anywhere in the document, nor invisible or non-ASCII
-  whitespace, nor setext headings, and only column-0 paired fences.**
+  whitespace, nor setext headings, nor level-1/2 headings with markup
+  (`*`, `_`, backtick, `[`, `]`, `&`, `<`, `~`), and only column-0 paired
+  fences.**
   This is a deliberate narrowing of the format going forward, not an
   implementation detail: a SPEC using any of them FAILs even where the
   construct is harmless (a `<placeholder>` inside backticks, a
@@ -330,7 +332,7 @@ stage's receipts.
 ## Confirmation & Revisit
 
 Confirmed by `python3 -m unittest discover -s tests/docops -t
-tests/docops` (217 tests, run on Python 3.14 and 3.9): the four-case
+tests/docops` (221 tests, run on Python 3.14 and 3.9): the four-case
 policy, frontmatter state (idle, duplicate, unknown value, near-miss key,
 unterminated, non-flat, invisible characters before the delimiter,
 truncation at every byte), each deny-list construct in each position,
@@ -342,13 +344,17 @@ registered tracks, CRLF and unreadable encodings, out-of-scope nesting,
 the Goals-checkbox false positive, every checker failure mode, schema
 conformance and an unchanged-repository check, plus a randomized oracle
 that no document holding a denied construct outside a fence may PASS.
-Seventy-seven deliberate source mutations were each caught by at least
+Eighty-one deliberate source mutations were each caught by at least
 one test. Each reviewed exploit input was run against the code state
 that preceded its fix and failed there, and passes now; for the final
 round (formatted headings, the unassessed-dimension schema) all 9 of the
 9 new tests fail on the previous state and pass on this one. A closed
 fence containing a checkbox passed on the earlier designs as well and
-still passes.
+still passes. The strikethrough extension (`~` in the heading-markup set)
+has a regression test that fails on the previous commit and passes now;
+the single-character cases for `<`, `]` and `[` pin characters that were
+already in the set, so they pass on the previous commit by design and are
+verified instead by mutants that drop each character.
 
 Revisit if the Owner amends the deny-list after seeing the consumer cost
 above, if a consumer needs per-track state not expressible in the SPEC

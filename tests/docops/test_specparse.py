@@ -453,24 +453,57 @@ class DenyListTests(DocopsTestCase):
         self.assertIn("DENIED_HEADING_MARKUP", codes(v))
         self.assertEqual([d.line for d in v.diagnostics if d.code == "DENIED_HEADING_MARKUP"], [4])
 
+    def test_second_milestones_heading_hidden_by_strikethrough_markup_cannot_pass(self):
+        # GFM renders ~~text~~ as strikethrough, so this is a second Milestones heading too.
+        text = "## Milestones\n- [ ] a\n\n## ~~Milestones~~\n- [ ]no-space bad\n"
+        v = run(text)
+        self.assertEqual(v.status, FAIL)
+        self.assertIn("DENIED_HEADING_MARKUP", codes(v))
+        self.assertEqual([d.line for d in v.diagnostics if d.code == "DENIED_HEADING_MARKUP"], [4])
+
+    def test_lone_less_than_in_a_heading_title_is_denied_by_the_markup_rule_alone(self):
+        # "<3" is not an HTML tag, so no other deny-list rule can fire: this pins "<".
+        for level in ("##", "#"):
+            v = run("## Milestones\n- [ ] a\n\n%s Milestones <3\n- [ ] b\n" % level)
+            self.assertEqual((v.status, codes(v)), (FAIL, ["DENIED_HEADING_MARKUP"]), level)
+            self.assertEqual([d.line for d in v.diagnostics], [4], level)
+
+    def test_lone_closing_bracket_in_a_heading_title_is_denied_by_the_markup_rule_alone(self):
+        # no "[" anywhere in the title: this pins "]".
+        for level in ("##", "#"):
+            v = run("## Milestones\n- [ ] a\n\n%s Mile]stones\n- [ ] b\n" % level)
+            self.assertEqual((v.status, codes(v)), (FAIL, ["DENIED_HEADING_MARKUP"]), level)
+            self.assertEqual([d.line for d in v.diagnostics], [4], level)
+
+    def test_lone_opening_bracket_in_a_heading_title_is_denied_by_the_markup_rule_alone(self):
+        # no "]" anywhere in the title: this pins "[".
+        for level in ("##", "#"):
+            v = run("## Milestones\n- [ ] a\n\n%s Mile[stones\n- [ ] b\n" % level)
+            self.assertEqual((v.status, codes(v)), (FAIL, ["DENIED_HEADING_MARKUP"]), level)
+            self.assertEqual([d.line for d in v.diagnostics], [4], level)
+
     def test_formatted_level_one_and_two_headings_are_denied(self):
         # Markdown renders the title, so "**Milestones**" is a second Milestones heading
         # that a literal title match would miss; its section could hold a damaged item.
         for title in ("**Milestones**", "*Milestones*", "`Milestones`", "[Milestones](#x)",
                       "&#77;ilestones", "_Milestones_", "Mile_stones", "Milestones &amp; more",
-                      "Milestones [done]", "Milestones <b>x</b>"):
+                      "Milestones [done]", "Milestones <b>x</b>", "~~Milestones~~", "Mile~stones",
+                      "Milestones <3", "Mile]stones", "Mile[stones"):
             for level in ("##", "#"):
                 text = "## Milestones\n- [ ] a\n\n%s %s\n- [ ]no-space bad\n" % (level, title)
                 v = run(text)
                 self.assertEqual(v.status, FAIL, (level, title))
-                self.assertIn("DENIED_HEADING_MARKUP" if "<" not in title else "DENIED_HTML",
-                              codes(v), (level, title))
+                self.assertEqual([d.line for d in v.diagnostics if d.code == "DENIED_HEADING_MARKUP"],
+                                 [4], (level, title))
+                if "<b>" in title:  # also an HTML tag: both rules report it
+                    self.assertIn("DENIED_HTML", codes(v), (level, title))
 
     def test_plain_headings_and_formatted_deeper_headings_are_fine(self):
         for text in ("## Milestones\n- [ ] a\n\n## Next steps (2026): all - done\nplain\n",
                      "# Title: A Plan\n\n" + BODY,
                      BODY + "\n### **bold** sub-heading with `code` and [link](u)\n",
-                     BODY + "\n#### snake_case sub-heading\n"):
+                     BODY + "\n#### snake_case sub-heading\n",
+                     BODY + "\n### ~~struck~~ sub-heading\n"):
             self.assertEqual(run(text).status, PASS, text)
 
     def test_nested_bullets_on_one_line_and_heading_in_list(self):
