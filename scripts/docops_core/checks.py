@@ -17,7 +17,9 @@ not a per-check status. It is a tool failure: the snapshot result carries
 an `error` object instead of `checks`, its status is null, and the run
 exits 2. It can never be read as N/A or PASS.
 
-The other result dimensions carry `assessed: false` and a reason, and no
+DOC_IMPACT_ASSESSMENT is evaluated only when an impact report is supplied
+(`--impact-file`, see impact.py and ADR-0014); every other dimension, and
+this one without a report, carries `assessed: false` and a reason, and no
 `status` at all, so no fifth status value exists. They are separate
 fields so they cannot be inferred from, or folded into, the structural
 verdict.
@@ -28,7 +30,7 @@ import posixpath
 from typing import Dict, List, Optional
 
 from . import RESULT_SCHEMA_VERSION, TOOL_NAME, TOOL_VERSION
-from . import gitstate, policy as policy_mod, specparse
+from . import gitstate, impact as impact_mod, policy as policy_mod, specparse
 from .gitstate import Entry, GitError, Snapshot
 
 PASS = "PASS"
@@ -51,8 +53,9 @@ DIMENSIONS = (
     "OWNER_ACCEPTANCE",
 )
 _NOT_ASSESSED_REASON = (
-    "not assessed by 'docops check' in this version; only SPEC_STRUCTURE is evaluated, "
-    "and no verdict here implies anything about this dimension"
+    "not assessed by 'docops check' in this run; SPEC_STRUCTURE is evaluated, and "
+    "DOC_IMPACT_ASSESSMENT only when --impact-file is given. No verdict here implies "
+    "anything about this dimension"
 )
 
 
@@ -74,6 +77,15 @@ def aggregate(statuses: List[str]) -> str:
 
 def exit_code_for(status: str) -> int:
     return _EXIT_CODES[status]
+
+
+def combined_exit_code(codes: List[int]) -> int:
+    """Worst of several non-tool exit codes: 1 (violation, or a required impact assessment
+    that is incomplete) over 3 (SPEC applicability not established) over 0."""
+    for code in (1, 3):
+        if code in codes:
+            return code
+    return 0
 
 
 def _diag(code: str, message: str, line: Optional[int] = None) -> dict:
@@ -164,6 +176,18 @@ def _check_track(snapshot: Snapshot, by_path: Dict[str, List[Entry]],
     )
 
 
+def registered_spec_paths(snapshot: Snapshot) -> List[str]:
+    """Registered SPEC track paths of a snapshot, present or not (the SPEC check's own
+    rule: the policy file, else the root SPEC.md). An unusable policy is never read as an
+    empty one: it raises SpecPolicyUnreadable and the caller must not guess."""
+    try:
+        policy = _load_policy(snapshot, _entries_by_path(snapshot.entries))
+    except policy_mod.PolicyError as exc:
+        raise impact_mod.SpecPolicyUnreadable("the SPEC policy %s cannot be used: %s"
+                                              % (policy_mod.POLICY_PATH, exc))
+    return [track.path for track in policy.tracks]
+
+
 def check_spec_structure(snapshot: Snapshot) -> dict:
     """Evaluate every registered SPEC in the snapshot. SPEC content problems
     become FAIL; checker/Git/policy problems raise ToolFailure."""
@@ -237,22 +261,33 @@ def check_spec_structure(snapshot: Snapshot) -> dict:
     }
 
 
-def _dimensions(spec_structure: dict) -> dict:
+def _dimensions(spec_structure: dict, impact: Optional[dict] = None) -> dict:
     checks = {"SPEC_STRUCTURE": spec_structure}
     for name in DIMENSIONS[1:]:
         checks[name] = {"assessed": False, "reason": _NOT_ASSESSED_REASON}
+    if impact is not None:
+        checks["DOC_IMPACT_ASSESSMENT"] = impact
     return checks
 
 
-def snapshot_result(request: dict, snapshot_info: dict, spec_structure: dict) -> dict:
-    status = spec_structure["status"]
+def snapshot_result(request: dict, snapshot_info: dict, spec_structure: dict,
+                    impact: Optional[dict] = None) -> dict:
+    statuses = [spec_structure["status"]]
+    codes = [exit_code_for(spec_structure["status"])]
+    if impact is not None and impact.get("assessed"):
+        statuses.append(impact["status"])
+        # A required assessment that is not satisfied (FAIL) or not complete (SKIP: missing,
+        # stale or unverifiable evidence) never exits 0, and uses the violation code; the
+        # per-check status stays SKIP. Exit 3 stays what Stage 1 made it: SPEC applicability.
+        codes.append(0 if impact["status"] == PASS else 1)
+    status = aggregate(statuses)
     return {
         "request": request,
         "snapshot": snapshot_info,
-        "checks": _dimensions(spec_structure),
+        "checks": _dimensions(spec_structure, impact),
         "error": None,
         "status": status,
-        "exit_code": exit_code_for(status),
+        "exit_code": combined_exit_code(codes),
     }
 
 
@@ -271,7 +306,8 @@ def error_snapshot_result(request: dict, code: str, message: str,
     }
 
 
-def deleted_snapshot_result(request: dict) -> dict:
+def deleted_snapshot_result(request: dict,
+                            report: Optional[impact_mod.ParsedReport] = None) -> dict:
     spec_structure = {
         "status": NA,
         "reason": "ref deletion: no tree is published, so there is no SPEC to check",
@@ -280,12 +316,23 @@ def deleted_snapshot_result(request: dict) -> dict:
         "diagnostics": [],
     }
     info = {"kind": "deleted-ref", "commit": None, "tree": None, "index_digest": None}
-    return snapshot_result(request, info, spec_structure)
+    impact = None
+    if report is not None:
+        if report.data is None:
+            # Structure does not depend on a subject: a malformed report is a FAIL here too.
+            impact = impact_mod.assess(report, None, None)
+        else:
+            impact = impact_mod.not_assessed(
+                "ref deletion: no tree is published, so the supplied impact report has no "
+                "subject")
+    return snapshot_result(request, info, spec_structure, impact)
 
 
-def check_request(repo: gitstate.Repository, request: dict) -> dict:
+def check_request(repo: gitstate.Repository, request: dict,
+                  report: Optional[impact_mod.ParsedReport] = None) -> dict:
     """Resolve and check one request. Any failure becomes a tool-error result;
-    this function does not raise."""
+    this function does not raise. `report` is the parsed impact report, if one
+    was supplied; it is validated against exactly this snapshot."""
     try:
         if request["kind"] == "index":
             snapshot = gitstate.index_snapshot(repo)
@@ -301,12 +348,19 @@ def check_request(repo: gitstate.Repository, request: dict) -> dict:
     info = {"kind": snapshot.kind, **snapshot.identity}
     try:
         spec_structure = check_spec_structure(snapshot)
+        impact = None
+        if report is not None:
+            impact = impact_mod.assess(report, snapshot, request.get("remote_oid"),
+                                       registered_spec_paths)
     except ToolFailure as exc:
         return error_snapshot_result(request, exc.code, exc.message, info)
+    except GitError as exc:
+        return error_snapshot_result(request, "IMPACT_GIT_ERROR",
+                                     "Git failed while validating the impact report: %s" % exc, info)
     except Exception as exc:  # noqa: BLE001
         return error_snapshot_result(request, "INTERNAL_ERROR",
                                      "%s: %s" % (type(exc).__name__, exc), info)
-    return snapshot_result(request, info, spec_structure)
+    return snapshot_result(request, info, spec_structure, impact)
 
 
 def build_result(command: str, repository_root: Optional[str], snapshots: List[dict],
@@ -322,7 +376,9 @@ def build_result(command: str, repository_root: Optional[str], snapshots: List[d
         summary = {"status": None, "exit_code": EXIT_TOOL_ERROR, "tool_errors": tool_errors}
     else:
         status = aggregate([s["status"] for s in snapshots])
-        summary = {"status": status, "exit_code": exit_code_for(status), "tool_errors": 0}
+        summary = {"status": status,
+                   "exit_code": combined_exit_code([s["exit_code"] for s in snapshots]),
+                   "tool_errors": 0}
     if error is not None:
         summary["reason"] = error
     return {

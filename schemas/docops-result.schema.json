@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mikkiola/tooltempest/schemas/docops-result.schema.json",
   "title": "DocOps checker result",
-  "description": "Output of scripts/docops.py check (schema_version 1). One document per invocation; one entry per inspected snapshot. Each check dimension has its own status; there is deliberately no single overloaded PASS/FAIL. Per-check statuses are exactly PASS, FAIL, SKIP, N/A. In this version only SPEC_STRUCTURE is evaluated; the remaining dimensions carry `assessed: false` and a reason (no `status` key) and say nothing about tests, documentation impact, review, acceptance, publication or owner acceptance. A failure of the checker itself (Git cannot read the snapshot, invalid policy, internal error) is not a status: the snapshot carries an `error` object instead of `checks`, its status is null and the exit code is 2. See ADR-0013.",
+  "description": "Output of scripts/docops.py check (schema_version 1). One document per invocation; one entry per inspected snapshot. Each check dimension has its own status; there is deliberately no single overloaded PASS/FAIL. Per-check statuses are exactly PASS, FAIL, SKIP, N/A. SPEC_STRUCTURE is always evaluated. DOC_IMPACT_ASSESSMENT is evaluated only when an impact report is supplied with --impact-file (ADR-0014); it then carries a status plus the report's identity, base/subject binding, per-portion results and diagnostics, and always states `semantic_review: not established`. Every other dimension, and DOC_IMPACT_ASSESSMENT without a report, carries `assessed: false` and a reason (no `status` key) and says nothing about tests, documentation consistency, acceptance, publication or owner acceptance. A failure of the checker itself (Git cannot read the snapshot, invalid policy, unreadable report file, internal error) is not a status: the snapshot carries an `error` object instead of `checks`, its status is null and the exit code is 2. See ADR-0013 and ADR-0014.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -92,7 +92,7 @@
             2,
             3
           ],
-          "description": "0 PASS/N/A, 1 FAIL, 2 tool failure, 3 SKIP."
+          "description": "0 PASS/N/A, 1 FAIL or an incomplete required impact assessment (DOC_IMPACT_ASSESSMENT SKIP), 2 tool failure, 3 SPEC_STRUCTURE SKIP; the worst of the snapshots (1 over 3 over 0)."
         },
         "tool_errors": {
           "type": "integer",
@@ -352,7 +352,14 @@
                   "$ref": "#/$defs/notAssessed"
                 },
                 "DOC_IMPACT_ASSESSMENT": {
-                  "$ref": "#/$defs/notAssessed"
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/notAssessed"
+                    },
+                    {
+                      "$ref": "#/$defs/impactAssessment"
+                    }
+                  ]
                 },
                 "DOC_CONSISTENCY_REVIEW": {
                   "$ref": "#/$defs/notAssessed"
@@ -380,7 +387,7 @@
               "$ref": "#/$defs/specStatus"
             }
           ],
-          "description": "Aggregate of the evaluated dimensions (currently SPEC_STRUCTURE only); null when `error` is set."
+          "description": "Aggregate of the evaluated dimensions (SPEC_STRUCTURE, plus DOC_IMPACT_ASSESSMENT when a report was supplied); null when `error` is set."
         },
         "exit_code": {
           "enum": [
@@ -388,7 +395,8 @@
             1,
             2,
             3
-          ]
+          ],
+          "description": "0 PASS/N/A, 1 FAIL or an incomplete required impact assessment (DOC_IMPACT_ASSESSMENT SKIP), 2 tool failure, 3 SPEC_STRUCTURE SKIP."
         },
         "error": {
           "type": [
@@ -426,6 +434,275 @@
         },
         "reason": {
           "type": "string"
+        }
+      }
+    },
+    "impactDiagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "effect",
+        "message",
+        "where"
+      ],
+      "description": "effect `fail` makes the dimension FAIL, `skip` makes it SKIP (incomplete, stale or not verifiable), `note` changes nothing.",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "effect": {
+          "enum": [
+            "fail",
+            "skip",
+            "note"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "where": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "impactPortion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "status",
+        "reason",
+        "evidence"
+      ],
+      "description": "One category of a full report, or the single `minimal` portion.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "PASS",
+            "FAIL",
+            "SKIP"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "freshness",
+              "outcome",
+              "reason"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "freshness": {
+                "enum": [
+                  "fresh",
+                  "stale",
+                  "unverifiable",
+                  "invalid"
+                ]
+              },
+              "outcome": {
+                "enum": [
+                  "pass",
+                  "fail",
+                  "partial",
+                  "skipped"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "impactAssessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assessed",
+        "status",
+        "reason",
+        "validated",
+        "semantic_review",
+        "report",
+        "mode",
+        "profile",
+        "subject",
+        "base",
+        "portions",
+        "diagnostics"
+      ],
+      "description": "A supplied impact report, validated against this snapshot. It proves structure, identity, completeness and evidence freshness only; the truth of its statements is never established. Never N/A.",
+      "properties": {
+        "assessed": {
+          "const": true
+        },
+        "status": {
+          "enum": [
+            "PASS",
+            "FAIL",
+            "SKIP"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        },
+        "validated": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "structure",
+              "identity",
+              "completeness",
+              "freshness"
+            ]
+          }
+        },
+        "semantic_review": {
+          "const": "not established"
+        },
+        "report": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source",
+            "path",
+            "sha256",
+            "bytes"
+          ],
+          "properties": {
+            "source": {
+              "enum": [
+                "file",
+                "stdin"
+              ]
+            },
+            "path": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "bytes": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "mode": {
+          "enum": [
+            "spec_driven",
+            "plan_driven",
+            "audit_test_driven",
+            "direct_fix",
+            "follow_up",
+            null
+          ]
+        },
+        "profile": {
+          "enum": [
+            "minimal",
+            "full",
+            null
+          ]
+        },
+        "subject": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tree",
+            "snapshot_tree",
+            "matches"
+          ],
+          "description": "The tree the report says it reviewed, the tree of the snapshot actually checked (for the index, computed in memory), and whether they are equal.",
+          "properties": {
+            "tree": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "snapshot_tree": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "matches": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          }
+        },
+        "base": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tree",
+            "verification",
+            "independently_verified",
+            "changed_paths"
+          ],
+          "description": "The comparison base as reported. `independently_verified` is true only when the invocation supplied the old tip of a pushed ref and the report's base tree equals that tip's tree.",
+          "properties": {
+            "tree": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "verification": {
+              "enum": [
+                "none",
+                "push-remote-tip",
+                "unavailable"
+              ]
+            },
+            "independently_verified": {
+              "type": "boolean"
+            },
+            "changed_paths": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          }
+        },
+        "portions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/impactPortion"
+          }
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/impactDiagnostic"
+          }
         }
       }
     }

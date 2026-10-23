@@ -215,7 +215,9 @@ no lock is repinned in this stage.
    `DOC_CONSISTENCY_REVIEW`, `ACCEPTANCE_VERIFICATION`, `PUBLICATION`,
    `OWNER_ACCEPTANCE`) are `{"assessed": false, "reason": ...}` with no
    `status` key at all: this version does not assess them, and nothing
-   about them can be read from, or into, the structural verdict. The
+   about them can be read from, or into, the structural verdict. (ADR-0014
+   later makes `DOC_IMPACT_ASSESSMENT` assessable, only when an impact
+   report is supplied; the other five stay as stated.) The
    schema forbids a `status` on those six. A failure of the checker
    itself (Git cannot read the snapshot, an invalid policy, an
    unreadable blob, an internal error, a missing package, a bad
@@ -232,7 +234,9 @@ no lock is repinned in this stage.
    report, snapshot-derived text is escaped so control, format and
    lone-surrogate characters cannot reach a terminal.
 10. **No `record` subcommand.** No current caller needs one; evidence
-   recording belongs to the later impact-review stage.
+   recording belongs to the later impact-review stage. (ADR-0014 adds
+   read-only validation of a supplied report in that stage, and still no
+   `record`.)
 
 ## Alternatives & Rationale
 

@@ -21,6 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = REPO_ROOT / "scripts"
 DOCOPS_PY = SCRIPTS_DIR / "docops.py"
 RESULT_SCHEMA = REPO_ROOT / "schemas" / "docops-result.schema.json"
+IMPACT_SCHEMA = REPO_ROOT / "schemas" / "docops-impact-report.schema.json"
 
 sys.dont_write_bytecode = True
 if str(SCRIPTS_DIR) not in sys.path:
@@ -74,11 +75,16 @@ def clean_env(extra=None):
 class GitFixture:
     """A scratch repository. Use as a context manager or call cleanup()."""
 
-    def __init__(self):
+    def __init__(self, object_format=None):
         self._tmp = tempfile.mkdtemp(prefix="docops-test-")
         self.root = os.path.realpath(os.path.join(self._tmp, "repo"))
         os.mkdir(self.root)
-        self.git("init", "-q", "-b", "main")
+        extra = ["--object-format=" + object_format] if object_format else []
+        try:
+            self.git("init", "-q", "-b", "main", *extra)
+        except AssertionError:
+            self.cleanup()
+            raise
         self.git("config", "commit.gpgsign", "false")
         self.git("config", "core.hooksPath", os.devnull)
 
@@ -156,8 +162,9 @@ def run_check_json(args, **kwargs):
 
 
 # --- minimal JSON Schema validator (type/enum/const/required/properties/
-# additionalProperties/items/$ref/minimum/minLength/pattern), enough to
-# prove result conformance without a third-party dependency -------------
+# additionalProperties/items/$ref/anyOf/allOf/not/if-then-else/minimum/
+# minItems/minLength/pattern), enough to prove result and report conformance
+# without a third-party dependency --------------------------------------
 
 _TYPES = {
     "object": dict, "array": list, "string": str, "integer": int,
@@ -188,6 +195,14 @@ def validate(instance, schema, root=None, path="$"):
     if "anyOf" in schema and not any(not validate(instance, option, root, path)
                                      for option in schema["anyOf"]):
         errors.append("%s: %r matches none of the anyOf alternatives" % (path, instance))
+    for part in schema.get("allOf", []):
+        errors += validate(instance, part, root, path)
+    if "not" in schema and not validate(instance, schema["not"], root, path):
+        errors.append("%s: %r matches a forbidden alternative" % (path, instance))
+    if "if" in schema:
+        branch = "then" if not validate(instance, schema["if"], root, path) else "else"
+        if branch in schema:
+            errors += validate(instance, schema[branch], root, path)
     if "const" in schema and not _same(instance, schema["const"]):
         errors.append("%s: expected const %r, got %r" % (path, schema["const"], instance))
     if "enum" in schema and not any(_same(instance, option) for option in schema["enum"]):
@@ -207,13 +222,15 @@ def validate(instance, schema, root=None, path="$"):
                 errors += validate(value, props[key], root, "%s.%s" % (path, key))
             elif schema.get("additionalProperties") is False:
                 errors.append("%s: unexpected property %r" % (path, key))
+    if isinstance(instance, list) and "minItems" in schema and len(instance) < schema["minItems"]:
+        errors.append("%s: fewer than %d items" % (path, schema["minItems"]))
     if isinstance(instance, list) and "items" in schema:
         for index, item in enumerate(instance):
             errors += validate(item, schema["items"], root, "%s[%d]" % (path, index))
     if isinstance(instance, str):
         if "minLength" in schema and len(instance) < schema["minLength"]:
             errors.append("%s: shorter than minLength" % path)
-        if "pattern" in schema and not re.fullmatch(schema["pattern"], instance):
+        if "pattern" in schema and not re.search(schema["pattern"], instance):
             errors.append("%s: does not match %s" % (path, schema["pattern"]))
     if isinstance(instance, int) and not isinstance(instance, bool) and "minimum" in schema:
         if instance < schema["minimum"]:
@@ -223,6 +240,10 @@ def validate(instance, schema, root=None, path="$"):
 
 def load_result_schema():
     return json.loads(RESULT_SCHEMA.read_text(encoding="utf-8"))
+
+
+def load_impact_schema():
+    return json.loads(IMPACT_SCHEMA.read_text(encoding="utf-8"))
 
 
 class DocopsTestCase(unittest.TestCase):

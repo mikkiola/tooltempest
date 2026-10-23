@@ -41,19 +41,33 @@ config directory. See `docs/adr/0001-docops-protocol.md` for the full
 protocol contract and the scope-boundary reasoning for why this addition
 does not compromise client independence (below).
 
-DocOps checker (added by ADR-0013 — `docs/adr/0013-docops-checker-spec-state-marker.md`;
-source only, not yet adopted by any consumer, which keep using `doc_sync.py`
-until they migrate):
+DocOps checker (added by ADR-0013 — `docs/adr/0013-docops-checker-spec-state-marker.md` —
+and extended by ADR-0014 — `docs/adr/0014-docops-impact-report-validator.md`).
+It is source only: tracked and listed in `MANIFEST.txt`, but not part of the
+seven-file Composition (V2) above and not adopted by any consumer, which keep
+using `doc_sync.py` until they migrate.
 - `scripts/docops.py` — read-only `check` / `report` of an exact Git snapshot
-  (`--tree index|<commit>`, `--push-stdin`); never writes, stages, commits,
-  pushes or uses the network
+  (`--tree index|<commit>`, `--push-stdin`), optionally validating an
+  impact report that a reviewer wrote (`--impact-file PATH|-`); never
+  writes, stages, commits, pushes or uses the network
 - `scripts/docops_core/` — the standard-library package behind it
-- `schemas/docops-result.schema.json`, `schemas/docops-policy.schema.json`
+- `schemas/docops-result.schema.json`, `schemas/docops-policy.schema.json`,
+  `schemas/docops-impact-report.schema.json`
 
-It checks SPEC structure only; the other result dimensions are
-reported as `assessed: false` (they carry no status). A SPEC declares "no active task" in its frontmatter
-(`---` / `spec-state: idle` / `---` at the top of the file); a failure of
-the checker itself exits 2 and is never a PASS or N/A. Tests: `python3 -m unittest discover -s tests/docops -t tests/docops`.
+It evaluates SPEC structure. Given an impact report it also checks that the
+report is well-formed, bound to the snapshot under check, complete against
+the change and current, and never whether its statements are true. Every
+other result dimension is reported as `assessed: false` (it carries no
+status). A SPEC declares "no active task" in its frontmatter (`---` /
+`spec-state: idle` / `---` at the top of the file); a failure of the checker
+itself exits 2 and is never a PASS or N/A. Tests:
+`python3 -B -m unittest discover -s tests/docops -t tests/docops`.
+
+`MANIFEST.txt` is longer than the seven mechanism files. By ADR-0006 and
+ADR-0008 it lists every tracked file under `scripts/`, `schemas/`, `skills/`,
+`rules/` and `docs/reference/`, so besides those seven it also holds the
+reference document below, the manifest validator `scripts/check_manifest.py`
+(a maintainer tool) and the DocOps checker files above.
 
 ## Reference documentation (added by ADR-0008)
 
@@ -204,10 +218,11 @@ consumer. This restates "Usage today" above as a linear sequence; for
 
 ## Scope
 
-This repository holds two kinds of content: the seven mechanism files
-described in "Composition (V2)" above, and shared reference
-documentation under `docs/reference/` (see "Reference documentation"
-above, added by ADR-0008). Project-specific content (for example, a
+This repository holds the seven mechanism files described in
+"Composition (V2)" above, shared reference documentation under
+`docs/reference/` (see "Reference documentation" above, added by
+ADR-0008), and the source of the DocOps checker (see "DocOps checker"
+above), which is not yet part of Composition (V2). Project-specific content (for example, a
 given project's own `CHECKPOINT.md`, or its own `scripts/verify.py`)
 does not belong here and is not included. `doc_sync.py` calls a
 consuming project's `scripts/verify.py` as a subprocess but contains no

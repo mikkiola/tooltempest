@@ -1,5 +1,6 @@
 docs/reference/documentation-rules.md
 rules/drift-control.md
+schemas/docops-impact-report.schema.json
 schemas/docops-policy.schema.json
 schemas/docops-result.schema.json
 schemas/execution-record.schema.json
@@ -11,6 +12,7 @@ scripts/docops_core/__init__.py
 scripts/docops_core/checks.py
 scripts/docops_core/cli.py
 scripts/docops_core/gitstate.py
+scripts/docops_core/impact.py
 scripts/docops_core/policy.py
 scripts/docops_core/specparse.py
 skills/doc-sync/SKILL.md

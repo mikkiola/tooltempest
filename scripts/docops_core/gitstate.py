@@ -26,8 +26,8 @@ from typing import Dict, List, Optional
 
 GIT_TIMEOUT_SEC = 60.0
 
-_OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
-_ZERO_OID_RE = re.compile(r"^0{40}(?:0{24})?$")
+_OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
+_ZERO_OID_RE = re.compile(r"^0{40}(?:0{24})?\Z")
 
 MODE_REGULAR = ("100644", "100755")
 
@@ -62,12 +62,13 @@ def _env() -> Dict[str, str]:
     return env
 
 
-def _run(cwd: str, args: List[str]) -> bytes:
+def _run(cwd: str, args: List[str], input_bytes: Optional[bytes] = None) -> bytes:
     command = ["git", "-C", cwd] + args
+    stdin = {"input": input_bytes} if input_bytes is not None else {"stdin": subprocess.DEVNULL}
     try:
         proc = subprocess.run(
             command,
-            stdin=subprocess.DEVNULL,
+            **stdin,
             capture_output=True,
             env=_env(),
             timeout=GIT_TIMEOUT_SEC,
@@ -194,3 +195,67 @@ def commit_snapshot(repo: Repository, rev: str) -> Snapshot:
     tree = _run(repo.cwd, ["rev-parse", "--verify", "--end-of-options", commit + "^{tree}"]).decode().strip()
     entries = _parse_ls_tree(_run(repo.cwd, ["ls-tree", "-r", "-z", "--full-tree", commit]))
     return Snapshot("commit", {"commit": commit, "tree": tree, "index_digest": None}, entries, repo)
+
+
+def object_type(repo: Repository, oid: str) -> Optional[str]:
+    """The Git object type named by a full OID ("tree", "commit", "blob", "tag"),
+    or None when the object is absent from this repository (a name that is only an abbreviation of a
+    different object, for example a 40-digit id in a sha256 repository, counts as
+    absent). Other Git failures raise GitError: an absent object is never
+    confused with a broken Git."""
+    if not _OID_RE.match(oid):
+        raise GitError("refusing to look up non-OID object name %r" % oid)
+    out = _run(repo.cwd, ["cat-file", "--batch-check"], (oid + "\n").encode()).decode().split()
+    if len(out) == 3 and out[0] == oid:
+        return out[1]
+    if len(out) == 3 or (len(out) == 2 and out[1] in ("missing", "ambiguous")):
+        return None  # absent, or only an abbreviation of some other object: not this OID
+    raise GitError("unparseable cat-file --batch-check answer %r" % " ".join(out))
+
+
+def commit_tree_oid(repo: Repository, oid: str) -> Optional[str]:
+    """The tree OID of a commit named by a full OID, or None when that object
+    is absent or is not a commit."""
+    if object_type(repo, oid) != "commit":
+        return None
+    return _run(repo.cwd, ["rev-parse", "--verify", "--end-of-options", oid + "^{tree}"]).decode().strip()
+
+
+def list_tree(repo: Repository, tree_oid: str) -> List[Entry]:
+    """Every non-tree entry beneath a tree object, by path. The caller has
+    established with object_type() that `tree_oid` is a tree."""
+    if object_type(repo, tree_oid) != "tree":
+        raise GitError("%s is not a tree object in this repository" % tree_oid)
+    return _parse_ls_tree(_run(repo.cwd, ["ls-tree", "-r", "-z", "--full-tree", tree_oid]))
+
+
+def index_tree_oid(entries: List[Entry], hex_length: int) -> Optional[str]:
+    """The OID `git write-tree` would give the index, computed in memory so that
+    no object is written. None when the index holds unmerged entries (it has
+    no tree). `hex_length` (40 or 64) picks the hash only for an empty index."""
+    if any(entry.stage != 0 for entry in entries):
+        return None
+    if entries:
+        hex_length = len(entries[0].oid)
+    hasher = hashlib.sha1 if hex_length == 40 else hashlib.sha256
+    root: dict = {}
+    for entry in entries:
+        parts = entry.path.encode("utf-8", "surrogateescape").split(b"/")
+        node = root
+        for part in parts[:-1]:
+            node = node.setdefault(part, {})
+        node[parts[-1]] = (entry.mode, entry.oid)
+
+    def build(node: dict) -> str:
+        items = []
+        for name, value in node.items():
+            if isinstance(value, dict):
+                items.append((name + b"/", b"40000", name, build(value)))
+            else:
+                items.append((name, value[0].encode(), name, value[1]))
+        items.sort(key=lambda item: item[0])  # Git orders a directory as if named "name/"
+        body = b"".join(mode + b" " + name + b"\0" + bytes.fromhex(oid)
+                        for _key, mode, name, oid in items)
+        return hasher(b"tree %d\0" % len(body) + body).hexdigest()
+
+    return build(root)

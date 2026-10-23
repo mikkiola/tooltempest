@@ -37,6 +37,24 @@ Run it after changes to composition paths and keep the manifest consistent in
 the same change. It compares tracked composition paths; an untracked file there
 still needs review and inclusion before publication.
 
+The DocOps checker (`scripts/docops.py`, `scripts/docops_core/`,
+`schemas/docops-*.schema.json`) has its own standard-library test suite:
+
+```bash
+python3 -B -m unittest discover -s tests/docops -t tests/docops
+```
+
+It builds throwaway Git repositories under the system temp directory, with
+hooks disabled, and runs the checker against them; it neither touches this
+repository's index or refs nor any consumer, and it does not execute
+`doc_sync.py` hook modes. It verifies the checker's behaviour: the SPEC-state
+policy and body checks, exact-snapshot reading (index, commit, pushed refs),
+failure modes that must never read as PASS, the impact-report validator
+(report structure, binding to the snapshot, completeness against the change,
+evidence freshness), and conformance of the output to the result schema. It
+does not verify that any document is correct. Run it after changes to those
+paths.
+
 [tests/test-doc-sync.sh](tests/test-doc-sync.sh) exercises DocOps hook modes in
 fixture repositories. It is not permitted by a no-hook-execution task; do not
 run it or production `doc_sync.py` modes just to validate Markdown. Reuse prior

@@ -533,10 +533,15 @@ class AggregationTests(DocopsTestCase):
         self.assertNotIn("notEvaluated", schema["$defs"])
         self.assertNotIn("NOT_EVALUATED", json.dumps(schema))
         self.assertTrue(not_assessed["additionalProperties"] is False)
-        for name in ("TESTS", "DOC_IMPACT_ASSESSMENT", "DOC_CONSISTENCY_REVIEW",
-                     "ACCEPTANCE_VERIFICATION", "PUBLICATION", "OWNER_ACCEPTANCE"):
-            self.assertEqual(schema["$defs"]["snapshotResult"]["properties"]["checks"]["anyOf"][1]
-                             ["properties"][name], {"$ref": "#/$defs/notAssessed"}, name)
+        dimensions = schema["$defs"]["snapshotResult"]["properties"]["checks"]["anyOf"][1]["properties"]
+        for name in ("TESTS", "DOC_CONSISTENCY_REVIEW", "ACCEPTANCE_VERIFICATION",
+                     "PUBLICATION", "OWNER_ACCEPTANCE"):
+            self.assertEqual(dimensions[name], {"$ref": "#/$defs/notAssessed"}, name)
+        # ADR-0014: only DOC_IMPACT_ASSESSMENT may also be assessed, and then never N/A.
+        self.assertEqual(dimensions["DOC_IMPACT_ASSESSMENT"], {"anyOf": [
+            {"$ref": "#/$defs/notAssessed"}, {"$ref": "#/$defs/impactAssessment"}]})
+        self.assertEqual(schema["$defs"]["impactAssessment"]["properties"]["status"]["enum"],
+                         ["PASS", "FAIL", "SKIP"])
         # a document that gives such a dimension a status is invalid
         good = {"schema_version": 1, "tool": {"name": "docops", "version": "x"}, "command": "check",
                 "repository": {"root": "/r"}, "snapshots": [], "summary": {

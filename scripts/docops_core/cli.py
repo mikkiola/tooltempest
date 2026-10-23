@@ -5,11 +5,18 @@ JSON on stdout; `report` prints the same result as text. Exit codes
 (also in the result's summary.exit_code):
 
   0  every evaluated check is PASS or N/A
-  1  an invariant is violated (FAIL)
+  1  an invariant is violated (FAIL), or a supplied impact report's required
+     assessment is not complete (its dimension is SKIP: missing, stale or
+     unverifiable evidence)
   2  the checker could not produce a verdict: usage, dependency, I/O, Git,
      policy or internal error. This is a tool failure reported through the
      exit code and an `error` object, not a per-check status.
-  3  applicability or evidence cannot be established (SKIP)
+  3  SPEC applicability cannot be established (SKIP of SPEC_STRUCTURE)
+
+`--impact-file PATH|-` additionally validates an externally written impact
+report against each inspected snapshot (DOC_IMPACT_ASSESSMENT). A report that
+cannot be read at all (missing file, I/O error) is a tool failure (exit 2); one
+that is read but malformed or inconsistent is a FAIL of that dimension.
 
 No failure path exits 0.
 """
@@ -21,7 +28,7 @@ import sys
 import unicodedata
 from typing import List, Optional
 
-from . import checks, gitstate
+from . import checks, gitstate, impact
 from .gitstate import GitError
 
 _PUSH_USAGE = "expected '<local ref> <local oid> <remote ref> <remote oid>' (git pre-push stdin)"
@@ -52,6 +59,13 @@ def _parser() -> argparse.ArgumentParser:
             action="store_true",
             help="read git pre-push ref updates from stdin and inspect each pushed "
             "local OID; a deleted ref (all-zero OID) has nothing to check",
+        )
+        cmd.add_argument(
+            "--impact-file",
+            metavar="PATH|-",
+            help="validate an impact report (schemas/docops-impact-report.schema.json) written "
+            "by the reviewer, against each inspected snapshot; '-' reads standard input "
+            "(not combinable with --push-stdin). Never written, generated or edited.",
         )
         cmd.add_argument("--repo", default=".", help="repository path (default: current directory)")
     return parser
@@ -87,7 +101,27 @@ def _parse_push_updates(raw: bytes) -> List[dict]:
     return requests
 
 
-def _evaluate(args: argparse.Namespace, stdin_bytes: Optional[bytes]) -> dict:
+class ImpactReadError(Exception):
+    """The impact report could not be read at all (a tool failure, not a FAIL)."""
+
+
+def _read_impact(args: argparse.Namespace) -> Optional[impact.ParsedReport]:
+    if args.impact_file is None:
+        return None
+    limit = impact.MAX_REPORT_BYTES + 1
+    try:
+        if args.impact_file == "-":
+            raw, source, path = sys.stdin.buffer.read(limit), "stdin", None
+        else:
+            with open(args.impact_file, "rb") as handle:
+                raw, source, path = handle.read(limit), "file", args.impact_file
+    except (OSError, ValueError) as exc:
+        raise ImpactReadError("impact report could not be read: %s" % exc)
+    return impact.load_report(raw, source, path)
+
+
+def _evaluate(args: argparse.Namespace, stdin_bytes: Optional[bytes],
+              report: Optional[impact.ParsedReport] = None) -> dict:
     root: Optional[str] = None
     try:
         repo = gitstate.open_repository(args.repo)
@@ -111,9 +145,9 @@ def _evaluate(args: argparse.Namespace, stdin_bytes: Optional[bytes]) -> dict:
             results.append(checks.error_snapshot_result(request, "INVALID_PUSH_UPDATE",
                                                         request["error"]))
         elif request["kind"] == "deleted-ref":
-            results.append(checks.deleted_snapshot_result(request))
+            results.append(checks.deleted_snapshot_result(request, report))
         else:
-            results.append(checks.check_request(repo, request))
+            results.append(checks.check_request(repo, request, report))
     return checks.build_result(args.command, root, results)
 
 
@@ -166,6 +200,21 @@ def _render_lines(result: dict) -> str:
                 out.append("  %-24s not assessed" % name)
             else:
                 out.append("  %-24s %s  - %s" % (name, check["status"], check["reason"]))
+            if name == "DOC_IMPACT_ASSESSMENT" and check.get("assessed"):
+                out.append("    report %s sha256 %s, mode %s, profile %s; semantic review: %s"
+                           % (check["report"]["path"] or check["report"]["source"],
+                              check["report"]["sha256"][:12], check["mode"], check["profile"],
+                              check["semantic_review"]))
+                for portion in check["portions"]:
+                    out.append("    portion %s: %s - %s" % (portion["name"], portion["status"],
+                                                            portion["reason"]))
+                out.append("    base %s: %s" % (
+                    check["base"]["tree"],
+                    "verified against the old tip of the push" if check["base"]["independently_verified"]
+                    else "NOT independently verified (completeness is relative to this base)"))
+                for diag in check["diagnostics"]:
+                    out.append("    %s %s: %s%s" % (diag["effect"], diag["code"], diag["message"],
+                                                    " [%s]" % diag["where"] if diag["where"] else ""))
             if name == "SPEC_STRUCTURE":
                 for track in check["tracks"]:
                     out.append("    track %s (%s): %s, state %s - %s"
@@ -193,10 +242,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not args.tree and not args.push_stdin:
         print("docops.py: error: give at least one --tree or --push-stdin", file=sys.stderr)
         return 2
+    if args.impact_file == "-" and args.push_stdin:
+        print("docops.py: error: --impact-file - and --push-stdin both read standard input",
+              file=sys.stderr)
+        return 2
 
     try:
         stdin_bytes = sys.stdin.buffer.read() if args.push_stdin else None
-        result = _evaluate(args, stdin_bytes)
+        report = _read_impact(args)
+        result = _evaluate(args, stdin_bytes, report)
+    except ImpactReadError as exc:
+        result = checks.build_result(args.command, None, [], str(exc))
     except Exception as exc:  # noqa: BLE001 - fail closed on any checker fault
         result = checks.build_result(
             args.command, None, [], "internal error: %s: %s" % (type(exc).__name__, exc)
