@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mikkiola/tooltempest/schemas/tooling-result.schema.json",
+  "title": "ToolTempest tooling result",
+  "description": "Output of `tooling.py verify|status|materialize --format json`. Three properties are reported separately and never merged: `local_integrity` (installed bytes against the hash declared for them), `upstream_provenance` (that declared hash against the hash-verified blob at the pinned commit) and `freshness` (the pin against a local upstream ref; advisory, it never changes the exit code). `unknown`/`not_on_ref` mean the property could not be established, which is not a pass. Exit code: 0 ok, 1 findings or a refused/unfinished operation, 2 the tool could not run (`error` is then present). See ADR-0015.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "tool", "command", "root", "pin", "source", "network", "receipt", "summary", "freshness", "files", "skipped", "findings", "error"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "tool": {
+      "type": "object", "additionalProperties": false, "required": ["name", "version"],
+      "properties": {"name": {"const": "tooltempest-tooling"}, "version": {"type": "string"}}
+    },
+    "command": {"enum": ["verify", "status", "materialize"]},
+    "root": {"type": ["string", "null"]},
+    "pin": {
+      "anyOf": [
+        {"type": "null"},
+        {"type": "object", "additionalProperties": false, "required": ["repository", "commit"],
+         "properties": {"repository": {"type": "string"}, "commit": {"$ref": "#/$defs/oid"}}}
+      ]
+    },
+    "source": {
+      "anyOf": [
+        {"type": "null"},
+        {"type": "object", "additionalProperties": false,
+         "required": ["path", "available", "remote_url", "remote_matches_lock"],
+         "properties": {
+           "path": {"type": "string"},
+           "available": {"type": "boolean"},
+           "remote_url": {"type": ["string", "null"]},
+           "remote_matches_lock": {"type": ["boolean", "null"], "description": "Informational only: bytes always come from the verified pinned commit, whatever the remote."}
+         }}
+      ]
+    },
+    "network": {
+      "type": "object", "additionalProperties": false, "required": ["allowed", "used"],
+      "properties": {"allowed": {"type": "boolean"}, "used": {"type": "boolean", "description": "Always false for verify and status."}}
+    },
+    "receipt": {
+      "type": "object", "additionalProperties": false, "required": ["present", "state", "commit", "matches_pin"],
+      "properties": {
+        "present": {"type": "boolean"},
+        "state": {"enum": ["complete", "installing", null]},
+        "commit": {"anyOf": [{"$ref": "#/$defs/oid"}, {"type": "null"}]},
+        "matches_pin": {"type": ["boolean", "null"]}
+      }
+    },
+    "summary": {
+      "type": "object", "additionalProperties": false,
+      "required": ["local_integrity", "upstream_provenance", "freshness", "errors", "exit_code"],
+      "properties": {
+        "local_integrity": {"enum": ["ok", "failed", "unknown"]},
+        "upstream_provenance": {"enum": ["ok", "failed", "unknown"]},
+        "freshness": {"enum": ["current", "behind", "not_on_ref", "unknown"]},
+        "errors": {"type": "integer", "minimum": 0},
+        "exit_code": {"enum": [0, 1, 2]}
+      }
+    },
+    "freshness": {
+      "anyOf": [
+        {"type": "null"},
+        {"type": "object", "additionalProperties": false,
+         "required": ["status", "upstream_ref", "upstream_commit", "behind", "reason"],
+         "properties": {
+           "status": {"enum": ["current", "behind", "not_on_ref", "unknown"]},
+           "upstream_ref": {"type": ["string", "null"]},
+           "upstream_commit": {"anyOf": [{"$ref": "#/$defs/oid"}, {"type": "null"}]},
+           "behind": {"type": ["integer", "null"]},
+           "reason": {"type": ["string", "null"]}
+         }}
+      ]
+    },
+    "files": {"type": "array", "items": {"$ref": "#/$defs/file"}},
+    "skipped": {
+      "type": "array",
+      "items": {"type": "object", "additionalProperties": false, "required": ["path", "reason"],
+                "properties": {"path": {"type": "string"}, "reason": {"type": "string"}}}
+    },
+    "findings": {"type": "array", "items": {"$ref": "#/$defs/finding"}},
+    "error": {
+      "anyOf": [
+        {"type": "null"},
+        {"type": "object", "additionalProperties": false, "required": ["code", "message"],
+         "properties": {"code": {"type": "string"}, "message": {"type": "string"}}}
+      ]
+    },
+    "result": {
+      "type": "object", "additionalProperties": false,
+      "required": ["dry_run", "applied", "written", "receipt_written", "post_verification"],
+      "description": "materialize only.",
+      "properties": {
+        "dry_run": {"type": "boolean"},
+        "applied": {"type": "boolean"},
+        "written": {"type": "array", "items": {"type": "string"}},
+        "receipt_written": {"type": "boolean"},
+        "post_verification": {
+          "anyOf": [
+            {"type": "null"},
+            {"type": "object", "additionalProperties": false,
+             "required": ["local_integrity", "upstream_provenance", "ok"],
+             "properties": {"local_integrity": {"enum": ["ok", "failed", "unknown"]},
+                            "upstream_provenance": {"enum": ["ok", "failed", "unknown"]},
+                            "ok": {"type": "boolean"}}}
+          ]
+        }
+      }
+    }
+  },
+  "allOf": [
+    {"if": {"properties": {"error": {"type": "object"}}, "required": ["error"]},
+     "then": {"properties": {"summary": {"properties": {"exit_code": {"const": 2}}}}}},
+    {"if": {"properties": {"summary": {"properties": {"exit_code": {"const": 2}}}}, "required": ["summary"]},
+     "then": {"properties": {"error": {"type": "object"}}}},
+    {"if": {"properties": {"command": {"const": "verify"}, "summary": {"properties": {"exit_code": {"const": 0}}}},
+            "required": ["command", "summary"]},
+     "then": {"properties": {"summary": {"properties": {
+       "local_integrity": {"const": "ok"}, "upstream_provenance": {"const": "ok"}, "errors": {"const": 0}}}}}},
+    {"if": {"properties": {"command": {"const": "materialize"}}, "required": ["command"]}, "then": {"required": ["result"]}}
+  ],
+  "$defs": {
+    "oid": {"type": "string", "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"},
+    "finding": {
+      "type": "object", "additionalProperties": false, "required": ["code", "severity", "path", "message", "hint"],
+      "properties": {
+        "code": {"type": "string", "minLength": 1},
+        "severity": {"enum": ["error", "warning", "info"]},
+        "path": {"type": ["string", "null"]},
+        "message": {"type": "string"},
+        "hint": {"type": ["string", "null"]}
+      }
+    },
+    "file": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "local", "declared", "provenance", "pinned", "matches_pin", "action", "reason"],
+      "properties": {
+        "path": {"type": "string"},
+        "local": {
+          "type": "object", "additionalProperties": false, "required": ["status", "sha256", "mode", "problem"],
+          "properties": {
+            "status": {"enum": ["ok", "missing", "modified", "outdated", "stale", "unrecorded", "unsafe", "unknown"]},
+            "sha256": {"type": ["string", "null"]},
+            "mode": {"enum": ["100644", "100755", null]},
+            "problem": {"type": ["string", "null"]}
+          }
+        },
+        "declared": {
+          "type": "object", "additionalProperties": false, "required": ["sha256", "by"],
+          "properties": {"sha256": {"type": ["string", "null"]}, "by": {"enum": ["lock", "receipt", null]}}
+        },
+        "provenance": {"enum": ["verified", "mismatch", "undeclared", "unknown"]},
+        "pinned": {
+          "anyOf": [
+            {"type": "null"},
+            {"type": "object", "additionalProperties": false, "required": ["sha256", "git_blob", "mode"],
+             "properties": {"sha256": {"type": "string"}, "git_blob": {"$ref": "#/$defs/oid"},
+                            "mode": {"enum": ["100644", "100755"]}}}
+          ]
+        },
+        "matches_pin": {"type": ["boolean", "null"]},
+        "action": {"enum": ["create", "upgrade", "record", "current", "refuse", null]},
+        "reason": {"type": ["string", "null"]}
+      }
+    }
+  }
+}

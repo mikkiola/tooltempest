@@ -63,11 +63,36 @@ status). A SPEC declares "no active task" in its frontmatter (`---` /
 itself exits 2 and is never a PASS or N/A. Tests:
 `python3 -B -m unittest discover -s tests/docops -t tests/docops`.
 
+Tooling bootstrap (added by ADR-0015 — `docs/adr/0015-tooling-bootstrap-verify-materialize.md`).
+Also source only and listed in `MANIFEST.txt`; no consumer uses it yet, and
+the consumers' own `scripts/sync-tooling.sh` is unchanged. It is a separate
+command surface from the checker above.
+- `scripts/tooling.py` with `verify`, `status` and `materialize` — make a
+  consumer's repository-local dependencies (`scripts/`, `schemas/`)
+  reproducible in a fresh clone or a linked worktree, from verified Git
+  objects at the commit pinned in `.tooltempest.lock`
+- `scripts/tooling_core/` — the standard-library package behind it
+- `schemas/tooling-result.schema.json`, `schemas/tooling-receipt.schema.json`
+
+`verify` and `status` are read-only, never touch the network, and report three
+properties separately: local integrity (installed bytes against the hash
+declared for them), upstream provenance (that hash against the blob at the
+pinned commit) and freshness (the pin against a local upstream ref; `unknown`
+when no ref can say). `materialize` is a dry run unless `--apply` is given;
+it writes an install receipt (`.tooltempest.receipt.json`) with the source
+commit and each file's hash and mode, upgrades only files it recognises as
+its own earlier version, refuses to overwrite an edited managed file or an
+unmanaged file, never repins, and fetches the pinned commit only with
+`--allow-network` and only when it is absent locally. It installs nothing
+under `~/.claude`; global skills stay out of its scope. Tests:
+`python3 -B -m unittest discover -s tests/tooling -t tests/tooling`.
+
 `MANIFEST.txt` is longer than the seven mechanism files. By ADR-0006 and
 ADR-0008 it lists every tracked file under `scripts/`, `schemas/`, `skills/`,
 `rules/` and `docs/reference/`, so besides those seven it also holds the
 reference document below, the manifest validator `scripts/check_manifest.py`
-(a maintainer tool) and the DocOps checker files above.
+(a maintainer tool), the DocOps checker files and the tooling bootstrap
+files above.
 
 ## Reference documentation (added by ADR-0008)
 
@@ -127,13 +152,18 @@ this repository itself.
 If a consumer has a specific commit SHA cached locally, that cached
 copy remains usable without network access. This is *not* the same as
 general offline reproducibility — recovering a version you have not
-previously cached still requires reaching GitHub.
+previously cached still requires reaching GitHub. `scripts/tooling.py`
+(above) follows this rule: it reads the pinned commit's objects from a
+local cache and reaches the network only for `materialize --allow-network`
+when that commit is absent.
 
 ## Usage today (manual — no adapter exists yet)
 
-There is currently no CLI or adapter tooling. Until one exists, using
-ToolTempest in a consuming project is a manual process, and differs by
-which part of the composition a project adopts.
+There is no client adapter. The only CLIs are the source-only
+`scripts/docops.py` and `scripts/tooling.py` described above, which no
+consumer has adopted yet. Until a consumer does, using ToolTempest in a
+consuming project is a manual process, and differs by which part of the
+composition a project adopts.
 
 **V1 markdown primitives** — copied into place for your client, e.g.
 for Claude Code:
@@ -177,9 +207,10 @@ consumer. This restates "Usage today" above as a linear sequence; for
    project's `.tooltempest.lock` with the full 40-character commit SHA
    you intend to use — never a branch name or tag. See "Version
    identity" above.
-2. **Initial install.** ToolTempest itself ships no installer script —
-   a consuming project needs its own, following the pattern already
-   proven in `mikkiola/article-pipeline`'s `scripts/sync-tooling.sh`:
+2. **Initial install.** No consumer has adopted ToolTempest's own
+   `scripts/tooling.py` yet, so a consuming project still needs its own
+   installer, following the pattern already proven in
+   `mikkiola/article-pipeline`'s `scripts/sync-tooling.sh`:
    clone this repository, check out the pinned SHA, and copy the V1
    primitives plus `scripts/doc_sync.py` /
    `schemas/execution-record.schema.json` into place, per "Usage
@@ -221,8 +252,9 @@ consumer. This restates "Usage today" above as a linear sequence; for
 This repository holds the seven mechanism files described in
 "Composition (V2)" above, shared reference documentation under
 `docs/reference/` (see "Reference documentation" above, added by
-ADR-0008), and the source of the DocOps checker (see "DocOps checker"
-above), which is not yet part of Composition (V2). Project-specific content (for example, a
+ADR-0008), the source of the DocOps checker and the source of the tooling bootstrap
+(see "DocOps checker" and "Tooling bootstrap" above), neither of which is yet
+part of Composition (V2). Project-specific content (for example, a
 given project's own `CHECKPOINT.md`, or its own `scripts/verify.py`)
 does not belong here and is not included. `doc_sync.py` calls a
 consuming project's `scripts/verify.py` as a subprocess but contains no

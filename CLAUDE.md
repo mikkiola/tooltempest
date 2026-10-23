@@ -13,9 +13,10 @@ authority. This maintainer navigation file is not a distributable primitive.
   installed as client rules.
 - `skills/` and `rules/` contain canonical shared source. They are not this
   project's active skills/settings. Do not copy them into `.claude/` here.
-- `scripts/` contains DocOps code and the independent manifest validator;
-  `schemas/` contains protocol schemas. No consumer-specific integration code,
-  account configuration or private runtime state belongs in this repository.
+- `scripts/` contains DocOps and tooling-bootstrap code and the independent
+  manifest validator; `schemas/` contains protocol schemas. No
+  consumer-specific integration code, account configuration or private
+  runtime state belongs in this repository.
 - A source change does not repin, install or activate anything for consumers.
   Preserve explicit source-selection and delivery decisions separately.
 
@@ -54,6 +55,22 @@ failure modes that must never read as PASS, the impact-report validator
 evidence freshness), and conformance of the output to the result schema. It
 does not verify that any document is correct. Run it after changes to those
 paths.
+
+The tooling bootstrap (`scripts/tooling.py`, `scripts/tooling_core/`,
+`schemas/tooling-*.schema.json`) has its own suite:
+
+```bash
+python3 -B -m unittest discover -s tests/tooling -t tests/tooling
+```
+
+It builds throwaway Git repositories (a fixture ToolTempest, fixture consumers,
+linked worktrees) and a throwaway HOME, hooks disabled, and runs the tool
+against them; the "network" is only ever a local `file://` repository. It
+neither touches this repository nor any consumer nor `~/.claude`, and it does
+not run `doc_sync.py` hook modes. It verifies the tool's behaviour (verified
+Git-object reads, the three reported properties, dry-run-first materialize,
+refusal to overwrite, journal recovery, serialisation), not that any consumer
+is installed correctly. Run it after changes to those paths.
 
 [tests/test-doc-sync.sh](tests/test-doc-sync.sh) exercises DocOps hook modes in
 fixture repositories. It is not permitted by a no-hook-execution task; do not
