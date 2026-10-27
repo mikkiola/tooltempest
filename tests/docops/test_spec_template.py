@@ -62,6 +62,10 @@ class SpecFormatTests(DocopsTestCase):
     def test_the_drift_control_example_passes_the_checker_as_a_spec(self):
         example = canonical_block(DRIFT_CONTROL)
         self.assertIn("### M1:", example, "the drift-control example lost its milestone heading")
+        self.assertIn("  drift: goal 0.0, constraint 0.0, scope 0.0, combined 0.0", example.splitlines(),
+                      "the drift-control example lost its two-space-indented single-key drift: line")
+        for axis in ("goal", "constraint", "scope", "combined"):
+            self.assertNotIn("drift-%s:" % axis, example, "the example uses a separate drift-%s: key" % axis)
         spec = "# Drift example\n\n## Milestones\n\n" + example
         self.assertSpecPasses(spec, milestones_total=1)
 
