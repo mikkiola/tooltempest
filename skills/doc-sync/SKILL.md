@@ -16,23 +16,47 @@ does not itself modify anything.
 
 ## What actually happens on a commit
 
-`pre-commit` runs four steps, strictly in this order, every time:
+`pre-commit` always starts with DETECT and then takes one of five paths.
+The four named steps (DETECT, VALIDATE, RECORD, STAGE) run in that order,
+but the last three run **only in one narrow case**: an ordinary commit does
+not reach them and leaves no audit record.
 
 1. **DETECT** — runs the consuming project's own `scripts/verify.py` to
    discover every inline-Milestones `SPEC.md` and its current
-   structural status.
-2. **VALIDATE** — re-runs `scripts/verify.py` against the same tree
-   DETECT just scanned (doc_sync.py never writes to any doc-owned
-   file, so there is nothing for this second run to have changed). If
-   anything is still MALFORMED here — typically an inline
-   `## Milestones` checkbox with an empty description, which is never
-   auto-fixed — the commit is blocked (exit 1).
+   structural status. What happens next depends on what it returned:
+   - **No `SPEC.md` found** (`scripts/verify.py` exits 2): the hook prints
+     "no SPEC.md files found" and exits 0. Nothing else runs.
+   - **`scripts/verify.py` itself is unusable** (missing, a syntax error,
+     a crash, unreadable output): the commit is blocked (exit 1).
+   - **A staged component has no `## Milestones` checklist** (pattern
+     `UNKNOWN`): the commit is blocked (exit 1). An `UNKNOWN` component
+     the commit does not touch does not block.
+   - **Every doc-owned file is structurally OK** (the ordinary case): the
+     hook prints "all structurally OK" and exits 0. VALIDATE, RECORD and
+     STAGE do not run; nothing is written and nothing is staged.
+   - **At least one doc-owned file is MALFORMED:** go on to VALIDATE.
+2. **VALIDATE** — only in that last case: re-runs `scripts/verify.py`
+   against the same tree DETECT just scanned (doc_sync.py never writes to
+   any doc-owned file, so nothing it wrote can have changed the result).
+   If it still fails — typically an inline `## Milestones` checkbox
+   with an empty description, which is never auto-fixed — the commit
+   is blocked (exit 1, "scripts/verify.py still failed"; if the re-run
+   crashes instead, "did not produce readable output"). This applies to
+   any MALFORMED doc-owned file, whether or not the commit touches it:
+   unlike the `UNKNOWN` case, the MALFORMED check is not limited to
+   staged components. Only if the re-run passes, which means the tree
+   changed or `scripts/verify.py` returned a different result for the
+   same tree, does the hook continue.
 3. **RECORD** — only reached after VALIDATE passes: writes one audit
    record to `.tempest/runs/docops_<run_id>.json`
    (`schemas/execution-record.schema.json` in this repository).
 4. **STAGE** — `git add`s the new record file (plus any pruned old run
    records). This is the only `git add` DocOps ever runs, and it never
    runs before VALIDATE has already succeeded.
+
+So a record exists only for a commit where DETECT saw a MALFORMED file and
+the VALIDATE re-run passed. A commit that succeeds because every file was
+OK has no record, and a blocked commit never has one.
 
 `pre-push` runs exactly one DocOps check: `scripts/verify.py`, hard-fail
 on non-zero exit. It never modifies the working tree, stages anything,
@@ -74,8 +98,13 @@ Fields worth knowing when reading a record:
   changes to it.
 - **"scripts/verify.py still failed"** — something `scripts/verify.py`
   flags cannot be auto-fixed (for example, an empty `## Milestones`
-  checkbox description). Nothing was touched, so there is nothing to
-  revert; fix the underlying issue by hand and retry.
+  checkbox description), in any doc-owned file, touched by the commit or
+  not. Nothing was touched, so there is nothing to revert; fix the
+  underlying issue by hand and retry.
+- **"scripts/verify.py did not produce readable output"** —
+  `scripts/verify.py` itself is missing, has a syntax error, crashed or
+  printed something unreadable (on DETECT or on the VALIDATE re-run).
+  This is usually a bug in that script, not in your commit.
 
 ## What this skill covers, and what it doesn't
 

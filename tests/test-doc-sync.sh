@@ -31,6 +31,11 @@
 #   malformed doc-owned SPEC     -> Case 8 (added in Stage 4: the one
 #                                   structural-failure path consumers hit
 #                                   that no case exercised)
+#   untouched MALFORMED file     -> Case 10 (added in Stage 4: blocks an
+#                                   unrelated commit, unlike UNKNOWN)
+#   RECORD and STAGE             -> Case 9 (added in Stage 4: the only path
+#                                   that writes a run record; Case 2 and
+#                                   Case 1 pin that ordinary runs write none)
 #
 # What this suite covers, and what it does not (Stage 4): it tests the
 # LEGACY Tier 1 entry points, scripts/doc_sync.py pre-commit/pre-push, driven
@@ -168,6 +173,8 @@ EXIT2=0
 OUT2="$(run_pre_commit "$WORK2" 2>&1)" || EXIT2=$?
 [ "$EXIT2" -eq 0 ] || fail "case 2: exit code was $EXIT2, expected 0, output: $OUT2"
 [ "$(cat "${WORK2}/SPEC.md")" = "$SPEC2_BEFORE" ] || fail "case 2: the hook rewrote SPEC.md; Tier 1 must never modify a doc-owned file"
+[ "$(record_count "$WORK2")" -eq 0 ] || fail "case 2: an ordinary all-OK commit must leave no run record (it never reaches RECORD)"
+[ -z "$(cd "$WORK2" && git diff --cached --name-only | grep '^\.tempest/')" ] || fail "case 2: an ordinary all-OK commit must stage nothing under .tempest/"
 
 # --- Case 4: detached HEAD -- must behave identically to a normal
 # branch checkout for both entry points; doc_sync.py's repo_root()
@@ -273,4 +280,58 @@ OUT8P="$(run_pre_push "$WORK8" 2>&1)" || EXIT8P=$?
 [ "$EXIT8P" -eq 1 ] || fail "case 8: pre-push exit code was $EXIT8P, expected 1, output: $OUT8P"
 echo "$OUT8P" | grep -q 'scripts/verify.py did not pass' || fail "case 8: expected the pre-push block message, got: $OUT8P"
 
-echo "OK: all doc_sync.py scenarios passed (cases 1-8)."
+# --- Case 9: the one path that reaches RECORD and STAGE. A doc-owned file is
+# MALFORMED when DETECT scans it and the VALIDATE re-run then passes (the tree
+# changed between the two scans, or the verifier gave a different answer for the
+# same tree; the stub below models the second). The stub reports MALFORMED on
+# its first call and OK on its second. doc_sync.py must run both steps, write exactly one
+# run record and stage that record, and nothing else.
+WORK9="$(seed_repo case9 with-spec)"
+cat > "${WORK9}/scripts/verify.py" <<'PY'
+#!/usr/bin/env python3
+import json, sys
+from pathlib import Path
+root = Path(__file__).resolve().parent.parent
+counter = root.parent / (root.name + ".verify-calls")
+calls = int(counter.read_text()) if counter.exists() else 0
+counter.write_text(str(calls + 1))
+spec = str(root / "SPEC.md")
+status = "MALFORMED" if calls == 0 else "OK"
+print(json.dumps([{"spec_path": spec, "pattern": "inline_spec", "source_file": spec,
+                   "structure": {"status": status}}]))
+sys.exit(1 if calls == 0 else 0)
+PY
+(cd "$WORK9" && printf '\nedit.\n' >> SPEC.md && git add SPEC.md)
+EXIT9=0
+OUT9="$(run_pre_commit "$WORK9" 2>&1)" || EXIT9=$?
+[ "$EXIT9" -eq 0 ] || fail "case 9: exit code was $EXIT9, expected 0, output: $OUT9"
+echo "$OUT9" | grep -q 'OK: staged .tempest/runs/docops_' || fail "case 9: expected the staged-record message, got: $OUT9"
+[ "$(cat "${SCRATCH}/case9-work.verify-calls")" = "2" ] || fail "case 9: verify.py should have run twice (DETECT, VALIDATE)"
+[ "$(record_count "$WORK9")" -eq 1 ] || fail "case 9: exactly one run record should have been written"
+STAGED9="$(cd "$WORK9" && git diff --cached --name-only | sort)"
+[ "$(echo "$STAGED9" | wc -l | tr -d ' ')" -eq 2 ] || fail "case 9: expected SPEC.md and the record staged, got: $STAGED9"
+echo "$STAGED9" | grep -q '^SPEC.md$' || fail "case 9: SPEC.md should still be staged, got: $STAGED9"
+echo "$STAGED9" | grep -q '^\.tempest/runs/docops_.*\.json$' || fail "case 9: the run record should be staged, got: $STAGED9"
+RECORD9="$(ls "${WORK9}"/.tempest/runs/docops_*.json)"
+python3 - "$RECORD9" <<'PY' || fail "case 9: the run record does not have the documented shape"
+import json, sys
+record = json.load(open(sys.argv[1]))
+assert record["steps"] == ["detect", "validate", "record"], record["steps"]
+assert record["counters"] == {"scanned": 1, "affected": 1, "updated": 0}, record["counters"]
+assert record["result"] == "SUCCESS" and record["hook"] == "pre-commit" and "commit_sha" not in record
+PY
+
+# --- Case 10: a MALFORMED doc-owned file blocks a commit that does not touch
+# it. Unlike the UNKNOWN pattern (Case 6b), the MALFORMED decision is not limited
+# to staged components: an unrelated commit is blocked while the file is broken.
+WORK10="$(seed_repo case10 with-spec)"
+(cd "$WORK10" && cp "$FIXTURE_SPEC_MALFORMED" SPEC.md && git add SPEC.md && git commit -q -m "malformed spec already committed" \
+  && printf 'unrelated\n' > NOTES.md && git add NOTES.md)
+EXIT10=0
+OUT10="$(run_pre_commit "$WORK10" 2>&1)" || EXIT10=$?
+[ "$EXIT10" -eq 1 ] || fail "case 10: exit code was $EXIT10, expected 1, output: $OUT10"
+echo "$OUT10" | grep -q 'scripts/verify.py still failed' || fail "case 10: expected the still-failed block message, got: $OUT10"
+[ "$(record_count "$WORK10")" -eq 0 ] || fail "case 10: a blocked commit must not leave a run record"
+[ "$(cd "$WORK10" && git diff --cached --name-only)" = "NOTES.md" ] || fail "case 10: nothing but the unrelated file may be staged"
+
+echo "OK: all doc_sync.py scenarios passed (cases 1-10)."
