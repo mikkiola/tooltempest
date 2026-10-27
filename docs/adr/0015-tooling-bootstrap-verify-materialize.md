@@ -181,10 +181,22 @@ sets are out of scope.
    keeps an open descriptor on every file and directory it made until it ends,
    so the inode cannot be freed and handed to another file, and a matching
    device and inode number can only be the object that was made. If the
-   platform lacks the descriptor-relative primitives (`UNSUPPORTED_PLATFORM`),
-   the run fails before writing anything; if a directory cannot be opened
-   without following a link, it stops (before writing, or as interrupted
-   with the cleanup above). There is no path-based fallback. Leftovers of an interrupted run are not removed: the journal
+   platform lacks the descriptor-relative primitives, a run that has something
+   to write fails with `UNSUPPORTED_PLATFORM` (exit 1, an error finding, not a
+   tool failure). The check runs after the plan and before the install lock is
+   taken, so the installation has created no lock file, staging file,
+   destination, directory or receipt. That is a statement about the
+   installation's own files only: with `--allow-network` the planning step may
+   already have fetched the pinned commit into the source cache, which is
+   outside the checkout by default but is whatever `--source` names, a path
+   inside the checkout included. A dry run and a run with nothing to write need
+   no primitives and are not affected. The check covers `open`, `mkdir`,
+   `unlink`, `rmdir`, `stat` and `rename` in `os.supports_dir_fd` (`os.replace`
+   is not listed there; the tests run it with `dir_fd`), `stat` without
+   following links, `O_DIRECTORY`, `O_NOFOLLOW` and `fchmod`. If a directory
+   cannot be opened without following a link, the run stops before any
+   installation file is written, or as interrupted with the cleanup above.
+   There is no path-based fallback. Leftovers of an interrupted run are not removed: the journal
    does not record staging names, so nothing establishes that a file with such
    a name belongs to this tool. They are kept and `materialize` reports each
    one as a `STAGING_FILE_PRESERVED` warning with the advice to check it and

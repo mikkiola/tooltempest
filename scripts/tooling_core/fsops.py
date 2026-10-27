@@ -38,6 +38,8 @@ class UnsafePath(OSError):
 
 
 def require_support() -> None:
+    # os.replace is not listed in os.supports_dir_fd (checked on CPython 3.9.6 and 3.14.5), so
+    # os.rename stands in for it here; the install tests run replace with dir_fd.
     missing = []
     for func in (os.open, os.mkdir, os.unlink, os.rmdir, os.stat, os.rename):
         if func not in os.supports_dir_fd:
@@ -51,7 +53,8 @@ def require_support() -> None:
         missing.append("fchmod")
     if missing:
         raise Unsupported("this platform lacks %s, which the installer needs to write safely; "
-                          "nothing was written" % ", ".join(missing))
+                          "no lock file, staging file, destination or receipt was created"
+                          % ", ".join(missing))
 
 
 class Dir:

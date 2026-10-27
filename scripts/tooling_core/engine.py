@@ -683,6 +683,11 @@ def run_materialize(opts: Options) -> dict:
     doc, work = _prepare(ev)
     if not opts.apply or work is None:
         return doc
+    try:
+        # before the lock file can be created: this failure leaves the checkout untouched
+        fsops.require_support()
+    except fsops.Unsupported as exc:
+        return _record_failure(doc, InstallFailure("UNSUPPORTED_PLATFORM", str(exc)))
     guard = _acquire_lock(opts)
     if guard is None:
         return _busy_document(opts)
@@ -769,11 +774,7 @@ def _apply(ev: Evaluation, doc: dict, pending: List[Item], final: Receipt,
     try:
         written = _execute(ev, pending, final, receipt_changes)
     except InstallFailure as exc:
-        doc["findings"].append({"code": exc.code, "severity": "error", "path": None,
-                                "message": exc.message, "hint": exc.hint})
-        doc["summary"].update(errors=doc["summary"]["errors"] + 1, exit_code=1)
-        result["written"] = exc.written
-        return doc
+        return _record_failure(doc, exc)
     result["applied"] = True
     result["written"] = written
     result["receipt_written"] = True
@@ -789,6 +790,14 @@ def _apply(ev: Evaluation, doc: dict, pending: List[Item], final: Receipt,
                                 "path": None, "message": "the installed files do not verify after "
                                 "the installation", "hint": "run verify for details"})
         doc["summary"].update(errors=doc["summary"]["errors"] + 1, exit_code=1)
+    return doc
+
+
+def _record_failure(doc: dict, exc: "InstallFailure") -> dict:
+    doc["findings"].append({"code": exc.code, "severity": "error", "path": None,
+                            "message": exc.message, "hint": exc.hint})
+    doc["summary"].update(errors=doc["summary"]["errors"] + 1, exit_code=1)
+    doc["result"]["written"] = exc.written
     return doc
 
 
@@ -845,10 +854,7 @@ def _discard(staged: List["fsops.Created"], tree: "fsops.Tree") -> None:
 
 def _execute(ev: Evaluation, pending: List[Item], final: Receipt, receipt_changes: bool) -> List[str]:
     try:
-        fsops.require_support()
         tree = fsops.Tree(ev.opts.root)
-    except fsops.Unsupported as exc:
-        raise InstallFailure("UNSUPPORTED_PLATFORM", str(exc))
     except OSError as exc:
         raise InstallFailure("STAGING_FAILED", "cannot open the checkout safely: %s; nothing was written"
                              % (exc.strerror or exc))

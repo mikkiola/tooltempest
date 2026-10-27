@@ -824,14 +824,15 @@ class SwappedDirectoryTests(RecoveryBase):
             self.assertEqual(handle.read(), before_receipt, "the receipt was replaced although its directory changed")
         self.assertEqual([n for n in os.listdir(self.consumer.path("meta.real")) if ".tmp." in n], [])
 
-    def test_without_the_primitives_for_safe_operation_it_fails_and_writes_nothing(self):
+    def test_without_the_primitives_for_safe_operation_it_fails_and_leaves_the_checkout_alone(self):
         planted, sub = self.plant_outside(self.scripts_names())
         before = self.digest(self.consumer.root)
         with mock.patch.object(fsops.os, "supports_dir_fd", set()):
             doc = engine.run_materialize(self.engine_options(apply=True))
         self.assertEqual(doc["summary"]["exit_code"], 1)
         self.assertIn("UNSUPPORTED_PLATFORM", self.codes(doc, "error"))
-        self.assertIn("nothing was written", " ".join(f["message"] for f in doc["findings"]))
+        self.assertIn("no lock file, staging file, destination or receipt was created",
+                      " ".join(f["message"] for f in doc["findings"]))
         self.assertEqual(self.digest(self.consumer.root), before)
         self.assertOutsideIntact(planted, sub)
 
