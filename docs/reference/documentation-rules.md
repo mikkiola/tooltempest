@@ -158,9 +158,11 @@ order:**
     - The result is command output or the task's final report. No
       permanent file or planning layer is required unless the existing
       workflow already requires one.
-12. **The `/spec` skill** — when it triggers (architectural decisions,
-    anything not verifiable after the fact just by reading the result),
-    when it doesn't (prose, drafts, brainstorms), and its model/auth
+12. **The `/spec` skill** — when running it is warranted (architectural
+    decisions, anything not verifiable after the fact just by reading
+    the result; it runs only on an explicit command from the owner or
+    user, never automatically), when it is not warranted (prose,
+    drafts, brainstorms), and its model/auth
     restriction if one exists (e.g. "Sonnet only, existing Pro OAuth
     login, never a direct API key — reason: a prior uncontrolled-spend
     incident from an unconfirmed model/auth switch").
