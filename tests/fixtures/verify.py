@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
-"""Fixture stub for a consuming project's own `scripts/verify.py`, used
-only by `tests/test-doc-sync.sh` (ADR-0005,
-`docs/adr/0005-ci-pipeline.md`). Implements just enough of the
-SPEC.md/CHECKPOINT.md contract `doc_sync.py`'s DETECT/VALIDATE steps
-rely on -- source_file, pattern ("checkpoint"/"UNKNOWN"),
-structure.status, spec_path -- to drive the scenario suite. Not a copy
-of any real project's verify.py: this repository is client-agnostic
-and does not ship one (see README, "Scope").
+"""Tier 1 contract stub for a consuming project's own `scripts/verify.py`.
 
-Convention: a SPEC.md at repo root or one level down pairs with a
-CHECKPOINT.md in the same directory ("checkpoint" pattern); a SPEC.md
-with no such CHECKPOINT.md is "UNKNOWN". Each CHECKPOINT.md
-"## <heading>" block must carry "- verify:", "- done-when:", and
-"- status:" lines to be structurally OK -- the same rule doc_sync.py's
-RECONCILE step (find_checkpoint_missing_fields) independently
-re-derives to decide what to fix.
+Used only by `tests/test-doc-sync.sh` (ADR-0005), which drives the legacy
+`scripts/doc_sync.py` hook entry points. It stands in for the consumer-side
+script that `doc_sync.py` runs, and implements just the output contract
+`doc_sync.py` reads: a JSON list of entries with `spec_path`, `pattern`
+("inline_spec" or "UNKNOWN"), `source_file` and `structure.status`
+("OK", "MALFORMED" or "UNKNOWN"), and the exit codes 0 (all OK), 1 (any
+entry not OK) and 2 (no SPEC.md found). Convention modelled: a SPEC.md at
+the repository root or one directory down whose `## Milestones` section has
+checkbox lines is "inline_spec" (a checkbox line without description text
+is MALFORMED); a SPEC.md without such a section is "UNKNOWN". The retired
+CHECKPOINT.md pairing is not modelled (ADR-0010).
+
+This is NOT the production SPEC parser. That is `scripts/docops_core/`,
+tested through `tests/docops` (which also checks that the SPEC fixtures
+next to this file get the verdicts this stub relies on). Nothing here
+verifies the production parser, and a pass of `tests/docops` says nothing
+about `doc_sync.py`: the two suites cover different code on purpose.
 """
 from __future__ import annotations
 
@@ -23,77 +26,64 @@ import re
 import sys
 from pathlib import Path
 
-HEADING_RE = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
-REQUIRED_FIELD_RES = {
-    "verify": re.compile(r"^\s*-\s*verify:", re.MULTILINE),
-    "done-when": re.compile(r"^\s*-\s*done-when:", re.MULTILINE),
-    "status": re.compile(r"^\s*-\s*status:", re.MULTILINE),
-}
+MILESTONES_HEADING_RE = re.compile(r"^##\s+Milestones\b", re.MULTILINE)
+NEXT_HEADING_RE = re.compile(r"^##\s+\S", re.MULTILINE)
+CHECKBOX_LINE_RE = re.compile(r"^[ \t]*(?:-|\d+\.)\s*\[[ xX]\](.*)$", re.MULTILINE)
 
 NON_COMPONENT_DIRS = {"scripts", ".git", ".tempest"}
 
 
-def validate_checkpoint(text: str) -> dict:
-    headings = list(HEADING_RE.finditer(text))
-    if not headings:
-        return {"status": "MALFORMED", "missing": ["no '## <heading>' block found"]}
-    missing_summary = []
-    for i, match in enumerate(headings):
-        block_end = headings[i + 1].start() if i + 1 < len(headings) else len(text)
-        content = text[match.end():block_end]
-        missing = [name for name, pat in REQUIRED_FIELD_RES.items() if not pat.search(content)]
-        if missing:
-            missing_summary.append(f"{match.group(1).strip()}: missing {', '.join(missing)}")
-    status = "MALFORMED" if missing_summary else "OK"
-    return {"status": status, "missing": missing_summary}
+def milestone_lines(text: str) -> list[tuple[int, str]]:
+    """(line number, description) of each checkbox line in the `## Milestones` section."""
+    heading = MILESTONES_HEADING_RE.search(text)
+    if heading is None:
+        return []
+    following = NEXT_HEADING_RE.search(text, heading.end())
+    section_end = following.start() if following else len(text)
+    found = []
+    for match in CHECKBOX_LINE_RE.finditer(text, heading.end(), section_end):
+        line_number = text.count("\n", 0, match.start()) + 1
+        found.append((line_number, match.group(1).strip()))
+    return found
 
 
-def discover_components(repo_root: Path) -> list[tuple[Path, Path | None]]:
-    """Returns (spec_path, checkpoint_path_or_None) pairs: repo-root
-    SPEC.md plus any immediate subdirectory's SPEC.md."""
-    pairs: list[tuple[Path, Path | None]] = []
-    root_spec = repo_root / "SPEC.md"
-    if root_spec.is_file():
-        checkpoint = repo_root / "CHECKPOINT.md"
-        pairs.append((root_spec, checkpoint if checkpoint.is_file() else None))
+def classify(text: str) -> tuple[str, dict]:
+    lines = milestone_lines(text)
+    if not lines:
+        return "UNKNOWN", {"status": "UNKNOWN", "total_units": 0, "well_formed": 0, "malformed_details": []}
+    bad = [{"line": number, "reason": "checkbox line without description text"}
+           for number, description in lines if not description]
+    return "inline_spec", {"status": "MALFORMED" if bad else "OK", "total_units": len(lines),
+                           "well_formed": len(lines) - len(bad), "malformed_details": bad}
+
+
+def find_spec_files(repo_root: Path) -> list[Path]:
+    """SPEC.md at the root, plus SPEC.md directly inside any immediate subdirectory."""
+    found = []
+    if (repo_root / "SPEC.md").is_file():
+        found.append(repo_root / "SPEC.md")
     for child in sorted(repo_root.iterdir()):
         if not child.is_dir() or child.name in NON_COMPONENT_DIRS or child.name.startswith("."):
             continue
-        spec = child / "SPEC.md"
-        if spec.is_file():
-            checkpoint = child / "CHECKPOINT.md"
-            pairs.append((spec, checkpoint if checkpoint.is_file() else None))
-    return pairs
+        if (child / "SPEC.md").is_file():
+            found.append(child / "SPEC.md")
+    return found
 
 
 def main() -> int:
     repo_root = Path(__file__).resolve().parent.parent
-    pairs = discover_components(repo_root)
-    if not pairs:
+    specs = find_spec_files(repo_root)
+    if not specs:
         print("verify: no SPEC.md files found", file=sys.stderr)
         return 2
-
     results = []
-    for spec_path, checkpoint_path in pairs:
-        if checkpoint_path is not None:
-            structure = validate_checkpoint(checkpoint_path.read_text(encoding="utf-8"))
-            results.append({
-                "spec_path": str(spec_path),
-                "pattern": "checkpoint",
-                "source_file": str(checkpoint_path),
-                "structure": structure,
-            })
-        else:
-            results.append({
-                "spec_path": str(spec_path),
-                "pattern": "UNKNOWN",
-                "source_file": None,
-                "structure": {"status": "UNKNOWN", "missing": []},
-            })
-
+    for spec in specs:
+        pattern, structure = classify(spec.read_text(encoding="utf-8"))
+        results.append({"spec_path": str(spec), "pattern": pattern,
+                        "source_file": str(spec) if pattern == "inline_spec" else None,
+                        "structure": structure})
     print(json.dumps(results, indent=2, ensure_ascii=False))
-    any_not_ok = any(r["structure"]["status"] != "OK" for r in results)
-    return 1 if any_not_ok else 0
+    return 1 if any(r["structure"]["status"] != "OK" for r in results) else 0
 
 
 if __name__ == "__main__":
