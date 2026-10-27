@@ -96,6 +96,13 @@ installed `docops.py` and `tooling.py` run and the installed legacy scripts
 import. It needs a Git checkout with a HEAD commit. Run it after changes to
 composition paths.
 
+CI (`.github/workflows/checks.yml`, ADR-0016) runs `scripts/check_manifest.py`
+and the three suites above as four independent jobs on pull requests to `main`
+and on pushes to `main`; `docops-scenario-suite.yml` (ADR-0005) still runs the
+Tier 1 script on pull requests. Neither is a required check, and a workflow edit
+is validated locally by running its commands (`tests/distribution/test_workflow.py`
+pins them at text level, it is not a YAML validation).
+
 [tests/test-doc-sync.sh](tests/test-doc-sync.sh) exercises DocOps hook modes in
 fixture repositories; its `verify.py` (`tests/fixtures/verify.py`) stands in for
 a consumer's own script and implements only the output contract `doc_sync.py`
