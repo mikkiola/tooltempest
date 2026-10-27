@@ -13,17 +13,24 @@ Include drift tracking fields per milestone, wherever milestones are
 tracked for the active work:
 
 ```markdown
-## M1: [milestone name]
+### M1: milestone name
 - [ ] description
-- verify: `npm run typecheck && npm run test`
-- done-when: 0 type errors, tests pass
-- status: in-progress
-- drift:
-  - goal: 0.0    # goal deviation (0.0=on target, 1.0=fully off)
-  - constraint: 0.0  # constraint violations (+0.1 each)
-  - scope: 0.0   # scope deviation (ratio of unplanned file changes)
-  - combined: 0.0  # weighted average (goal×50% + constraint×30% + scope×20%)
+  verify: `npm run typecheck && npm run test`
+  done-when: 0 type errors, tests pass
+  status: in-progress
+  drift-goal: 0.0
+  drift-constraint: 0.0
+  drift-scope: 0.0
+  drift-combined: 0.0
 ```
+
+This format is compatible with `docops check` (ADR-0013): put each milestone under
+the SPEC's `## Milestones` heading, with its fields indented exactly two spaces.
+
+- `drift-goal`: goal deviation (0.0 = on target, 1.0 = fully off)
+- `drift-constraint`: constraint violations (+0.1 each)
+- `drift-scope`: scope deviation (ratio of unplanned file changes)
+- `drift-combined`: weighted average (goal×50% + constraint×30% + scope×20%)
 
 ## DocOps-managed fields
 
@@ -32,7 +39,7 @@ drift-tracking fields: CHECKPOINT.md support was retired entirely
 (ADR-0010, `mikkiola/tooltempest`) once every consuming project's own
 `scripts/verify.py` stopped recognizing it as a pattern. DocOps now
 validates only a `SPEC.md`'s own inline `## Milestones` checklist; the
-`verify:`/`done-when:`/`status:`/`drift:` fields above are tracked by
+`verify:`/`done-when:`/`status:`/`drift-*:` fields above are tracked by
 convention, not enforced or auto-filled by any tool.
 
 ## Drift thresholds

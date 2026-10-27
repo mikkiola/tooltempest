@@ -83,7 +83,7 @@ Check whether SPEC.md exists in the current directory.
 After the interview is complete, update the SPEC.md file in detail:
 
 ```markdown
-# [Feature Name] Specification
+# Feature Name Specification
 
 ## Overview
 [One-sentence description]
@@ -118,12 +118,19 @@ After the interview is complete, update the SPEC.md file in detail:
 - ...
 
 ## Milestones
-1. [ ] Phase 1
-2. [ ] Phase 2
+- [ ] Phase 1
+- [ ] Phase 2
 
 ## Open Questions / Decisions Needed
 - ...
 ```
+
+`docops check` reads this SPEC (grammar policy: ADR-0013). Use plain level-1/level-2
+headings (no brackets, emphasis or code) and flat `- [ ]` milestone checkboxes under
+`## Milestones`, never numbered or nested. Put optional `verify:`, `done-when:` and
+`status:` fields on the lines right after the checkbox, indented exactly two spaces,
+with no list marker and no blank line between. Use no line indented four or more
+spaces.
 
 ### Step 5: Guidance
 
