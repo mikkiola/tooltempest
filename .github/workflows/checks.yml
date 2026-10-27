@@ -1,0 +1,61 @@
+name: ToolTempest checks
+
+# ADR-0016 (docs/adr/0016-ci-checks-for-the-distributed-file-set.md): the manifest
+# check and the standard-library test suites that qualify what this repository
+# distributes. Informational, like ADR-0005's scenario suite: it is not wired into
+# branch protection and no repository setting is changed by this file. The Tier 1
+# scenario suite stays in docops-scenario-suite.yml, unchanged.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  manifest:
+    name: manifest is complete
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: MANIFEST.txt matches the tracked composition files
+        run: python3 scripts/check_manifest.py
+
+  docops:
+    name: DocOps checker tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: tests/docops
+        run: python3 -B -m unittest discover -s tests/docops -t tests/docops
+
+  tooling:
+    name: tooling bootstrap tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: tests/tooling
+        run: python3 -B -m unittest discover -s tests/tooling -t tests/tooling
+
+  distribution:
+    name: distributed file set tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: tests/distribution
+        run: python3 -B -m unittest discover -s tests/distribution -t tests/distribution

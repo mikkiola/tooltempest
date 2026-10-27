@@ -23,7 +23,8 @@ CURRENT_MISSION → current operational workstream, where adopted (see below)
 ARCHITECTURE   → what exists right now
 ROADMAP        → where we're going
 BACKLOG        → what to do next, concretely
-SPEC.md        → exact task specification (transient, one active at a time)
+SPEC.md        → exact task specification of active work (transient;
+                 having no active SPEC is a normal state)
 ADR            → why a decision was made (permanent, one per decision)
 ```
 
@@ -123,19 +124,91 @@ order:**
 10. **Response format by task type** — how different task types
     (read-only audit, implementation, review) should be reported back.
 11. **Review report format** — the exact shape of a completion report
-    (commands run, literal output, commit SHA if committed).
-12. **The `/spec` skill** — when it triggers (architectural decisions,
-    anything not verifiable after the fact just by reading the result),
-    when it doesn't (prose, drafts, brainstorms), and its model/auth
+    (commands run, literal output, commit SHA if committed). It carries
+    the project's post-change verification:
+
+    **Post-change verification.** Whatever the entry mode (SPEC-driven;
+    plan-driven without a SPEC; audit- or test-driven; direct fix;
+    follow-up on work already started), one verification process runs
+    after a change. The mode sets the entry; the depth follows the
+    change's size, scope and risk.
+    - The report names the entry mode, compares the real starting and
+      final states, runs the applicable checks, considers the material
+      impact on documents, and reports acceptance and publication
+      separately.
+    - A small local edit names the areas it touched, runs the checks it
+      needs and explains only the material checks it did not run; it
+      needs no table of all document categories. A change to
+      architecture, an interface, configuration, several repositories or
+      irreversible state checks the relevant dependencies and documents
+      and edits only those that became wrong.
+    - A valid result is not repeated. If a later change affected a piece
+      of evidence, only that piece is re-checked.
+    - PASS is confirmed; FAIL is a confirmed failure; SKIP is not run or
+      not runnable, and states why; N/A is a justified inapplicability.
+      A check that did not run is never a PASS.
+    - Reported separately: tests and checks; document impact;
+      substantive review; acceptance of the stated criteria;
+      publication; owner acceptance.
+    - A `Closes:` trailer or a commit does not by itself prove a
+      criterion. A commit can point to a snapshot; the proof is a
+      concrete check result or other confirmation proportionate to the
+      criterion (for a simple criterion, a relevant passing test or a
+      directly observed result is enough; no heavy report per task).
+    - The result is command output or the task's final report. No
+      permanent file or planning layer is required unless the existing
+      workflow already requires one.
+12. **The `/spec` skill** — when running it is warranted (architectural
+    decisions, anything not verifiable after the fact just by reading
+    the result; it runs only on an explicit command from the owner or
+    user, never automatically), when it is not warranted (prose,
+    drafts, brainstorms), and its model/auth
     restriction if one exists (e.g. "Sonnet only, existing Pro OAuth
     login, never a direct API key — reason: a prior uncontrolled-spend
     incident from an unconfirmed model/auth switch").
-13. **`SPEC.md`'s status** — single root-level file, living/overwritten
-    by each new `/spec` session (not accumulated), full history
-    recoverable via `git log`, not kept in the file itself. If the
-    project intentionally keeps SPEC.md permanently in the repo rather
-    than deleting it after each cycle, that deviation is stated
-    explicitly here (Radar's decision) — the default is Living Spec.
+13. **`SPEC.md`'s status and the SPEC policy** — one policy for every
+    project, the same in ToolTempest, article-pipeline, Brain and
+    Radar; no project has its own SPEC lifecycle. `SPEC.md` is
+    living/overwritten by each new `/spec` session (not accumulated),
+    full history recoverable via `git log`, not kept in the file
+    itself. By default the one SPEC is the root-level `SPEC.md`; a
+    repository with several tracks, or a SPEC away from the root,
+    registers each track's path in an optional `.docops-policy.json`,
+    and the DocOps checker evaluates exactly the registered tracks. A
+    check of the SPEC state has these cases:
+    - **No SPEC at all** (nothing registered and no `SPEC.md`
+      anywhere): the normal "no active SPEC" state. The SPEC check is
+      N/A, neither FAIL nor PASS.
+    - **A SPEC that declares there is no active task** (frontmatter
+      `spec-state: idle`): the same state, N/A. A project that keeps
+      the file between tasks marks it idle; it does not state a
+      project-specific exception here.
+    - **A SPEC outside the registered scope**, so not evaluated, while
+      nothing in scope is active: not N/A. "No active task" is proven
+      only for the registered tracks, so the result is SKIP with the
+      reason stated.
+    - **A registered SPEC that is absent:** FAIL.
+    - **A SPEC for active work:** it must meet the common structural
+      contract: PASS if it does, FAIL if it does not.
+    - **A SPEC that is corrupted or unreadable, or checking code that
+      is unavailable or did not run:** this is not "no SPEC". The
+      result is FAIL, or SKIP with the reason stated; never N/A and
+      never PASS. When the checker cannot reach any verdict (an
+      unreadable object, an invalid registry, a Git or internal
+      error) it reports a tool error, with no per-check status and a
+      non-zero exit.
+
+    Milestones are not invented for an absent or idle SPEC. Having no
+    active SPEC never excuses skipping safety, confirmations, review or
+    verification: the post-change verification of item 11 applies in
+    every case. _Dated note
+    (2026-10-27, DocOps SPEC policy change): this item used to let a
+    project keep `SPEC.md` permanently as a deviation stated in its own
+    Constitution (the Radar project's earlier practice). That
+    project-specific exception is replaced by the policy above; the
+    idle declaration is the one mechanism for a SPEC that stays in the
+    repository between tasks. The superseded wording is kept in the
+    file's Git history._
 14. **ADR discipline** — see the full ADR section below; this section
     of CONSTITUTION.md states the citation rule (no ADR-number citation
     in ARCHITECTURE.md/ROADMAP.md/CONSTITUTION.md — describe the

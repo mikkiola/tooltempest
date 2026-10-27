@@ -1,0 +1,165 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mikkiola/tooltempest/schemas/tooling-receipt.schema.json",
+  "title": "ToolTempest install receipt",
+  "description": "Written only by `tooling.py materialize --apply`, by default as .tooltempest.receipt.json next to the lock. Records the exact source commit and every installed path with its sha256, Git blob id and mode. `state` is `complete` normally; `installing` marks a journal written before the first file is replaced, so an interrupted installation is reported as recovery-required and a repeated `materialize --apply` finishes it. In a journal `previous_sha256` and `previous_mode` are the hash and executable mode a managed file may still legitimately have (both null for a file that did not exist; the parser rejects one without the other). Receipt paths are repository-relative, inside scripts/ or schemas/ only. See ADR-0015.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "tool",
+    "tool_version",
+    "state",
+    "repository",
+    "commit",
+    "files"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "tool": {
+      "const": "tooltempest-tooling"
+    },
+    "tool_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "state": {
+      "enum": [
+        "complete",
+        "installing"
+      ]
+    },
+    "repository": {
+      "type": "string",
+      "minLength": 1
+    },
+    "commit": {
+      "$ref": "#/$defs/oid"
+    },
+    "files": {
+      "type": "array"
+    }
+  },
+  "if": {
+    "properties": {
+      "state": {
+        "const": "installing"
+      }
+    },
+    "required": [
+      "state"
+    ]
+  },
+  "then": {
+    "properties": {
+      "files": {
+        "items": {
+          "$ref": "#/$defs/fileInstalling"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "oid": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "fileComplete": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "git_blob",
+        "mode"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^(scripts|schemas)/.+",
+          "description": "Repository-relative POSIX path; no empty, '.', '..' or .git components, no backslashes, no control characters, no duplicates or case/Unicode collisions (enforced by the tool)."
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "git_blob": {
+          "$ref": "#/$defs/oid"
+        },
+        "mode": {
+          "enum": [
+            "100644",
+            "100755"
+          ]
+        }
+      }
+    },
+    "fileInstalling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "git_blob",
+        "mode",
+        "previous_sha256",
+        "previous_mode"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^(scripts|schemas)/.+"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "git_blob": {
+          "$ref": "#/$defs/oid"
+        },
+        "mode": {
+          "enum": [
+            "100644",
+            "100755"
+          ]
+        },
+        "previous_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "previous_mode": {
+          "anyOf": [
+            {
+              "enum": [
+                "100644",
+                "100755"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "else": {
+    "properties": {
+      "files": {
+        "items": {
+          "$ref": "#/$defs/fileComplete"
+        }
+      }
+    }
+  }
+}

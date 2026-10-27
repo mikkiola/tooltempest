@@ -1,0 +1,502 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mikkiola/tooltempest/schemas/docops-impact-report.schema.json",
+  "title": "DocOps impact report (input to `docops check --impact-file`)",
+  "description": "A report written by whoever reviewed a change (a person or an agent); the checker only reads it (ADR-0014). This schema states the field-level rules. Rules that need more than one field are enforced by the checker and not expressible here: base_tree must differ from subject_tree (the format has no representation of a no-op); evidence ids are unique and every cited id exists; a test entry's passed + failed + skipped equals run; outcome `pass` needs run > 0, no failures or skips and exit code 0 when given; `fail` needs a failed test or a non-zero exit code. A valid report is not a true report: the checker validates structure, snapshot binding, completeness and evidence freshness, and never decides that a change is small or that a document is consistent.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "mode",
+    "base_tree",
+    "subject_tree",
+    "profile",
+    "evidence"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "mode": {
+      "enum": [
+        "spec_driven",
+        "plan_driven",
+        "audit_test_driven",
+        "direct_fix",
+        "follow_up"
+      ],
+      "description": "The five approved entry modes: 1 SPEC-driven, 2 plan-driven without SPEC, 3 audit/test-driven, 4 direct fix, 5 follow-up."
+    },
+    "process": {
+      "$ref": "#/$defs/process"
+    },
+    "plan": {
+      "$ref": "#/$defs/plan"
+    },
+    "base_tree": {
+      "$ref": "#/$defs/treeOid",
+      "description": "Tree OID of the comparison base."
+    },
+    "subject_tree": {
+      "$ref": "#/$defs/treeOid",
+      "description": "Tree OID of the reviewed final state. Must equal the tree of the snapshot under check."
+    },
+    "profile": {
+      "enum": [
+        "minimal",
+        "full"
+      ],
+      "description": "minimal: affected paths and a reason a full category review is not required. full: all eight categories. The checker does not judge which profile the change deserves."
+    },
+    "minimal": {
+      "$ref": "#/$defs/minimal"
+    },
+    "categories": {
+      "$ref": "#/$defs/categories"
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/evidence"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "mode": {
+            "const": "plan_driven"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "plan"
+        ]
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "mode": {
+            "enum": [
+              "plan_driven",
+              "audit_test_driven",
+              "direct_fix",
+              "follow_up"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "process"
+        ],
+        "properties": {
+          "process": {
+            "required": [
+              "spec_skill_invoked",
+              "spec_created",
+              "plan_created"
+            ],
+            "properties": {
+              "spec_skill_invoked": {
+                "const": false
+              },
+              "spec_created": {
+                "const": false
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "mode": {
+            "enum": [
+              "audit_test_driven",
+              "direct_fix",
+              "follow_up"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "process": {
+            "properties": {
+              "plan_created": {
+                "const": false
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "profile"
+        ],
+        "properties": {
+          "profile": {
+            "const": "minimal"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "minimal"
+        ],
+        "not": {
+          "required": [
+            "categories"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "profile"
+        ],
+        "properties": {
+          "profile": {
+            "const": "full"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "categories"
+        ],
+        "not": {
+          "required": [
+            "minimal"
+          ]
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "treeOid": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "path": {
+      "type": "string",
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)[^\\x00-\\x1f\\x7f\\\\]+$",
+      "description": "Repository-relative POSIX path; a trailing slash names a directory. No leading slash, '.' or '..' components, empty components or control characters."
+    },
+    "scopePath": {
+      "anyOf": [
+        {
+          "const": "."
+        },
+        {
+          "$ref": "#/$defs/path"
+        }
+      ],
+      "description": "'.' means the whole tree."
+    },
+    "evidenceId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,64}$"
+    },
+    "process": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "spec_skill_invoked": {
+          "type": "boolean"
+        },
+        "spec_created": {
+          "type": "boolean"
+        },
+        "plan_created": {
+          "type": "boolean"
+        }
+      },
+      "description": "Required in modes 2 to 5, where /spec is not invoked and no SPEC is created (plan criteria B3a, B3b). The checker also compares spec_created with the actual change."
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reference",
+        "used"
+      ],
+      "properties": {
+        "reference": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "used": {
+          "const": true
+        }
+      },
+      "description": "Required in mode 2: the plan artifact that organised the work. Optional in every other mode, where an existing plan may be referenced (a follow-up reusing an earlier plan); it is then described the same way. Only its presence in the report is checked."
+    },
+    "minimal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "affected_paths",
+        "reason",
+        "evidence"
+      ],
+      "properties": {
+        "affected_paths": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/path"
+          }
+        },
+        "reason": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/evidenceId"
+          }
+        }
+      }
+    },
+    "categories": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "architecture",
+        "interfaces",
+        "failure_behaviour",
+        "configuration",
+        "tests",
+        "decisions",
+        "acceptance",
+        "planning_and_operations"
+      ],
+      "description": "architecture: architecture and responsibilities; interfaces: interfaces, schemas, algorithms; failure_behaviour: error handling and behaviour on failure; configuration: configuration, installation, dependencies; tests: tests and guarantees; decisions: ADRs and decisions; acceptance: SPEC and acceptance criteria; planning_and_operations: backlog, mission, roadmap, operational documents.",
+      "properties": {
+        "architecture": {
+          "$ref": "#/$defs/category"
+        },
+        "interfaces": {
+          "$ref": "#/$defs/category"
+        },
+        "failure_behaviour": {
+          "$ref": "#/$defs/category"
+        },
+        "configuration": {
+          "$ref": "#/$defs/category"
+        },
+        "tests": {
+          "$ref": "#/$defs/category"
+        },
+        "decisions": {
+          "$ref": "#/$defs/category"
+        },
+        "acceptance": {
+          "$ref": "#/$defs/category"
+        },
+        "planning_and_operations": {
+          "$ref": "#/$defs/category"
+        }
+      }
+    },
+    "category": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence"
+      ],
+      "properties": {
+        "affected_paths": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/path"
+          }
+        },
+        "no_impact_reason": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/evidenceId"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "anyOf": [
+            {
+              "required": [
+                "affected_paths"
+              ]
+            },
+            {
+              "required": [
+                "no_impact_reason"
+              ]
+            }
+          ]
+        },
+        {
+          "not": {
+            "required": [
+              "affected_paths",
+              "no_impact_reason"
+            ]
+          }
+        }
+      ]
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "tree",
+        "scope_paths",
+        "outcome",
+        "summary"
+      ],
+      "description": "One piece of evidence, gathered on `tree` over `scope_paths`. It is stale when a path in that scope differs between `tree` and the subject. A commit message, trailer or bare exit code is not an evidence kind.",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/evidenceId"
+        },
+        "kind": {
+          "enum": [
+            "test",
+            "review",
+            "inspection"
+          ]
+        },
+        "tree": {
+          "$ref": "#/$defs/treeOid"
+        },
+        "scope_paths": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/scopePath"
+          }
+        },
+        "outcome": {
+          "enum": [
+            "pass",
+            "fail",
+            "partial",
+            "skipped"
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "command": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "tests": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "run",
+            "passed",
+            "failed",
+            "skipped"
+          ],
+          "properties": {
+            "run": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "passed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "failed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "skipped": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "test"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "command",
+              "tests"
+            ]
+          },
+          "else": {
+            "allOf": [
+              {
+                "not": {
+                  "required": [
+                    "command"
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "required": [
+                    "tests"
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "required": [
+                    "exit_code"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

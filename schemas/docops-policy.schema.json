@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mikkiola/tooltempest/schemas/docops-policy.schema.json",
+  "title": "DocOps SPEC registry",
+  "description": "Optional .docops-policy.json at a repository root, read from the inspected snapshot. Registers which SPEC files are tracks. Whether a SPEC is active or idle is declared inside the SPEC itself, as `spec-state: idle` in its frontmatter (ADR-0013 Decision 1), not here. Without this file, a root-level SPEC.md is the single implicit track 'root'. See ADR-0013.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "specs"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "specs": {
+      "type": "array",
+      "description": "Registered SPEC tracks. A registered path that is absent from the snapshot is a FAIL. An empty list registers no tracks; any SPEC.md then present is reported out of scope.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "track"],
+        "properties": {
+          "path": {"type": "string", "minLength": 1, "description": "Relative POSIX path from the repository root; no '..', '.', empty or '.git' components, no backslashes. Must be unique."},
+          "track": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$", "description": "Track name, unique within the policy."}
+        }
+      }
+    }
+  }
+}
