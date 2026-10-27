@@ -124,7 +124,40 @@ order:**
 10. **Response format by task type** — how different task types
     (read-only audit, implementation, review) should be reported back.
 11. **Review report format** — the exact shape of a completion report
-    (commands run, literal output, commit SHA if committed).
+    (commands run, literal output, commit SHA if committed). It carries
+    the project's post-change verification:
+
+    **Post-change verification.** Whatever the entry mode (SPEC-driven;
+    plan-driven without a SPEC; audit- or test-driven; direct fix;
+    follow-up on work already started), one verification process runs
+    after a change. The mode sets the entry; the depth follows the
+    change's size, scope and risk.
+    - The report names the entry mode, compares the real starting and
+      final states, runs the applicable checks, considers the material
+      impact on documents, and reports acceptance and publication
+      separately.
+    - A small local edit names the areas it touched, runs the checks it
+      needs and explains only the material checks it did not run; it
+      needs no table of all document categories. A change to
+      architecture, an interface, configuration, several repositories or
+      irreversible state checks the relevant dependencies and documents
+      and edits only those that became wrong.
+    - A valid result is not repeated. If a later change affected a piece
+      of evidence, only that piece is re-checked.
+    - PASS is confirmed; FAIL is a confirmed failure; SKIP is not run or
+      not runnable, and states why; N/A is a justified inapplicability.
+      A check that did not run is never a PASS.
+    - Reported separately: tests and checks; document impact;
+      substantive review; acceptance of the stated criteria;
+      publication; owner acceptance.
+    - A `Closes:` trailer or a commit does not by itself prove a
+      criterion. A commit can point to a snapshot; the proof is a
+      concrete check result or other confirmation proportionate to the
+      criterion (for a simple criterion, a relevant passing test or a
+      directly observed result is enough; no heavy report per task).
+    - The result is command output or the task's final report. No
+      permanent file or planning layer is required unless the existing
+      workflow already requires one.
 12. **The `/spec` skill** — when it triggers (architectural decisions,
     anything not verifiable after the fact just by reading the result),
     when it doesn't (prose, drafts, brainstorms), and its model/auth
@@ -163,7 +196,10 @@ order:**
       error) it reports a tool error, with no per-check status and a
       non-zero exit.
 
-    Milestones are not invented for an absent or idle SPEC. _Dated note
+    Milestones are not invented for an absent or idle SPEC. Having no
+    active SPEC never excuses skipping safety, confirmations, review or
+    verification: the post-change verification of item 11 applies in
+    every case. _Dated note
     (2026-10-27, DocOps SPEC policy change): this item used to let a
     project keep `SPEC.md` permanently as a deviation stated in its own
     Constitution (the Radar project's earlier practice). That
