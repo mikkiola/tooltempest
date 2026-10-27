@@ -72,6 +72,24 @@ Git-object reads, the three reported properties, dry-run-first materialize,
 refusal to overwrite, journal recovery, serialisation), not that any consumer
 is installed correctly. Run it after changes to those paths.
 
+The distribution suite qualifies what consumers receive:
+
+```bash
+python3 -B -m unittest discover -s tests/distribution -t tests/distribution
+```
+
+It runs `check_manifest.py` against disposable repositories (a complete, an
+incomplete and a stale manifest, and damaged variants of the real one), pins the
+import surface the legacy scripts share (`relative_to_root`, `repo_root`,
+`restore_snapshots`) and the behaviour its callers rely on, and materializes
+the exact HEAD commit of this checkout into a disposable consumer with
+`scripts/tooling.py` (the checkout's Git objects are only read; no network, no
+consumer; `HOME` is pointed at a temporary directory). It then checks the complete file set against
+`MANIFEST.txt`, every content hash, blob id and mode, the receipt, and that the
+installed `docops.py` and `tooling.py` run and the installed legacy scripts
+import. It needs a Git checkout with a HEAD commit. Run it after changes to
+composition paths.
+
 [tests/test-doc-sync.sh](tests/test-doc-sync.sh) exercises DocOps hook modes in
 fixture repositories. It is not permitted by a no-hook-execution task; do not
 run it or production `doc_sync.py` modes just to validate Markdown. Reuse prior
