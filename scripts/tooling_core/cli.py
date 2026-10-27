@@ -3,15 +3,21 @@
 Exit codes (also in the result's summary.exit_code):
 
   0  verify: local integrity and upstream provenance are both established;
-     status: always (informational); materialize: the plan is executable /
-     was applied and verified. Freshness never changes the exit code.
+     status: unless the tool fails (it is informational, findings included);
+     materialize: the plan is executable / was applied and verified.
+     Freshness never changes the exit code.
   1  something is wrong or unestablished: a missing, edited or unrecorded
      file, a hash that does not match the pinned blob, an unreadable lock,
      manifest or object, an unfinished installation (recovery required), a
-     conflict that materialize refuses to overwrite, or another materialize
-     holding the lock. Nothing is ever turned into success.
-  2  the tool could not run: usage, Git, I/O or internal error (an `error`
-     object is present).
+     conflict that materialize refuses to overwrite, another materialize
+     holding the lock, a platform that lacks what safe writing needs
+     (UNSUPPORTED_PLATFORM from the descriptor primitives, checked before the
+     lock), or an installation that was applied but could not be verified
+     afterwards (POST_INSTALL_VERIFICATION_FAILED). Nothing is ever turned
+     into success.
+  2  the tool could not run: usage, Git, I/O or internal error, or a platform
+     without POSIX file locking (an `error` object is present; a usage error
+     from argument parsing is printed on stderr only).
 
 Only `materialize --apply` writes, and only inside the consumer checkout.
 """
@@ -28,11 +34,22 @@ from .engine import (DEFAULT_SOURCE, Options, ToolFailure, error_document, evalu
 from .objects import GitFailure, GitMissing, run_git
 
 
+EXIT_CODES_HELP = """exit codes:
+  0  verify: local integrity and upstream provenance established; status: unless the
+     tool fails; materialize: the plan is executable, or was applied and verified
+  1  something is wrong or unestablished, a conflict is refused, the installation
+     could not be verified, or the platform cannot write safely
+  2  the tool could not run (usage, Git, I/O or internal error; for materialize --apply
+     also a platform without POSIX file locking)
+"""
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="tooling.py",
         description="Reproduce a consumer's repository-local ToolTempest dependencies from verified "
-        "Git objects at the pinned commit.")
+        "Git objects at the pinned commit.",
+        epilog=EXIT_CODES_HELP, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--version", action="version", version="tooling.py " + TOOL_VERSION)
     sub = parser.add_subparsers(dest="command", required=True)
     for name, text in (
@@ -40,7 +57,8 @@ def _parser() -> argparse.ArgumentParser:
         ("status", "read-only summary of the same properties; exit 0 unless the tool fails"),
         ("materialize", "install the pinned files (dry run unless --apply)"),
     ):
-        cmd = sub.add_parser(name, help=text, description=text)
+        cmd = sub.add_parser(name, help=text, description=text, epilog=EXIT_CODES_HELP,
+                             formatter_class=argparse.RawDescriptionHelpFormatter)
         cmd.add_argument("--root", help="the consumer checkout (default: the Git top level of the "
                          "current directory); a linked worktree works")
         cmd.add_argument("--lock", help="default: <root>/.tooltempest.lock")

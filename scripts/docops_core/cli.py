@@ -10,8 +10,12 @@ JSON on stdout; `report` prints the same result as text. Exit codes
      unverifiable evidence)
   2  the checker could not produce a verdict: usage, dependency, I/O, Git,
      policy or internal error. This is a tool failure reported through the
-     exit code and an `error` object, not a per-check status.
-  3  SPEC applicability cannot be established (SKIP of SPEC_STRUCTURE)
+     exit code, not a per-check status: a usage error and a failure to render
+     the output are printed on stderr only, a failure to write it leaves no
+     result at all; any other failure also appears in the JSON result, as the
+     `error` object of the snapshot it concerns or as `summary.reason`.
+  3  SPEC applicability cannot be established (SKIP of SPEC_STRUCTURE); 1
+     takes precedence when both apply
 
 `--impact-file PATH|-` additionally validates an externally written impact
 report against each inspected snapshot (DOC_IMPACT_ASSESSMENT). A report that
@@ -31,6 +35,14 @@ from typing import List, Optional
 from . import checks, gitstate, impact
 from .gitstate import GitError
 
+EXIT_CODES_HELP = """exit codes:
+  0  every evaluated check is PASS or N/A
+  1  an invariant is violated (FAIL), or a supplied impact report's required
+     assessment is not complete
+  2  no verdict: usage, dependency, I/O, Git, policy or internal error
+  3  SPEC applicability cannot be established (1 takes precedence when both apply)
+"""
+
 _PUSH_USAGE = "expected '<local ref> <local oid> <remote ref> <remote oid>' (git pre-push stdin)"
 
 
@@ -38,13 +50,16 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="docops.py",
         description="Read-only DocOps checker. Inspects exactly the snapshot it is pointed at.",
+        epilog=EXIT_CODES_HELP,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = parser.add_subparsers(dest="command", required=True)
     for name, text in (
         ("check", "evaluate snapshots and print the versioned JSON result"),
         ("report", "evaluate snapshots and print a human-readable report"),
     ):
-        cmd = sub.add_parser(name, help=text, description=text)
+        cmd = sub.add_parser(name, help=text, description=text, epilog=EXIT_CODES_HELP,
+                             formatter_class=argparse.RawDescriptionHelpFormatter)
         cmd.add_argument(
             "--tree",
             action="append",

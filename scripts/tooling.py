@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """ToolTempest tooling bootstrap: reproduce a consumer's repository-local dependencies.
 
-    tooling.py verify      [--root DIR] [--lock FILE] [--receipt FILE] [--source DIR] [--format text|json]
+    tooling.py verify      [--root DIR] [--lock FILE] [--receipt FILE] [--source DIR]
+                           [--upstream-ref REF] [--format text|json]
     tooling.py status      (same options; informational, exit 0 unless the tool fails)
     tooling.py materialize (same options) [--apply] [--allow-network]
 
@@ -10,8 +11,12 @@ local integrity, upstream provenance and freshness separately. `materialize`
 is a dry run unless `--apply` is given, never overwrites a file it does not
 manage, never repins, never touches ~/.claude, and reaches the network only
 with `--allow-network` and only when the pinned commit is absent locally.
-Exit codes: 0 ok, 1 findings (or refused / nothing applied), 2 the tool
-could not run. See docs/adr/0015 and schemas/tooling-result.schema.json.
+Exit codes: 0 ok, 1 findings (or refused, or applied but not verified), 2 the
+tool could not run. With `--format json` the result conforms to
+schemas/tooling-result.schema.json (see docs/adr/0015). One exception, in any
+format: if the `tooling_core` package itself cannot be imported, the version
+and the command are unknown and only a minimal JSON object is printed (an
+`error` with code IMPORT_FAILED and `summary.exit_code` 2).
 """
 import sys
 

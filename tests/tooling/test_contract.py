@@ -243,7 +243,16 @@ class HelpAndUsageTests(ToolingCase):
         self.assertEqual(parser.parse_args(["verify"]).format, "text")
 
 
-class DocumentedCodesTests(unittest.TestCase):
+class DocumentedCodesTests(ToolingCase):
+    def test_the_help_text_lists_exactly_the_codes_the_schema_allows(self):
+        allowed = set(load_schema(RESULT_SCHEMA)["properties"]["summary"]["properties"]["exit_code"]["enum"])
+        for args in (["--help"], ["verify", "--help"], ["status", "--help"], ["materialize", "--help"]):
+            code, out, err = run_tooling(args, self.home)
+            self.assertEqual((code, err), (0, ""), args)
+            self.assertIn("exit codes:", out)
+            listed = {int(m.group(1)) for m in re.finditer(r"^\s{2}(\d)\s{2}\S", out.split("exit codes:", 1)[1], re.MULTILINE)}
+            self.assertEqual(listed, allowed, args)
+
     def test_the_cli_docstring_lists_exactly_the_codes_the_schema_allows(self):
         documented = {int(m.group(1)) for m in re.finditer(r"^\s{2}(\d)\s{2}\S", cli_module.__doc__, re.MULTILINE)}
         allowed = set(load_schema(RESULT_SCHEMA)["properties"]["summary"]["properties"]["exit_code"]["enum"])

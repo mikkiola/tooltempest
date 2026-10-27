@@ -193,6 +193,14 @@ class DocumentedCodesTests(unittest.TestCase):
         self.assertEqual(self.documented(cli_module.__doc__), allowed)
         self.assertEqual(allowed, {0, 1, 2, 3})
 
+    def test_the_help_text_lists_every_code_and_the_same_set_as_the_schema(self):
+        allowed = set(load_result_schema()["properties"]["summary"]["properties"]["exit_code"]["enum"])
+        for args in (["--help"], ["check", "--help"], ["report", "--help"]):
+            code, out, err = run_cli(args)
+            self.assertEqual((code, err), (0, ""), args)
+            self.assertIn("exit codes:", out)
+            self.assertEqual(self.documented(out.split("exit codes:", 1)[1]), allowed, args)
+
     def test_the_script_docstring_mentions_every_code(self):
         source = DOCOPS_PY.read_text(encoding="utf-8")
         docstring = source.split('"""')[1]

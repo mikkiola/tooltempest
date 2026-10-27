@@ -1,19 +1,25 @@
 #!/usr/bin/env python3
 """DocOps checker: read-only SPEC-state check of an exact Git snapshot.
 
-    docops.py check  --tree index|REV [--tree ...] [--push-stdin] [--repo PATH]
-    docops.py report --tree index|REV [--tree ...] [--push-stdin] [--repo PATH]
+    docops.py check  --tree index|REV [--tree ...] [--push-stdin] [--impact-file PATH|-] [--repo PATH]
+    docops.py report --tree index|REV [--tree ...] [--push-stdin] [--impact-file PATH|-] [--repo PATH]
 
 `check` prints a versioned JSON result, `report` the same result as
 text. Exit 0 only when every evaluated check is PASS or N/A; 1 on a
-violation, 2 when the checker itself could not run to a verdict (usage,
-dependency, Git, policy, internal error; reported via the exit code and
-an `error` object, never as a per-check status), 3 when applicability
-cannot be established. See docs/adr/0013 and
-schemas/docops-result.schema.json.
+violation, or when a supplied impact report's required assessment is not
+complete; 2 when the checker could not run to a verdict (usage,
+dependency, I/O, Git, policy, internal error: never a per-check status; a
+usage error and a failure to render the output are printed on stderr
+only, a failure to write it leaves no result at all, any other failure
+also appears in the JSON result as an `error` object or `summary.reason`); 3 when SPEC applicability cannot be
+established (1 takes precedence when both apply). See docs/adr/0013,
+docs/adr/0014 and schemas/docops-result.schema.json.
 
 The checker writes nothing: no files (bytecode caching is disabled
-below), no index, config, refs or objects, no network.
+below), no index, config, refs or objects, no network. One limit: when it
+reads the index (`--tree index`), Git itself runs the program named by the
+repository's own `core.fsmonitor` setting, if any; the checker neither
+starts nor disables it.
 """
 import sys
 

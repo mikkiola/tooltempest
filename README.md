@@ -59,9 +59,17 @@ report is well-formed, bound to the snapshot under check, complete against
 the change and current, and never whether its statements are true. Every
 other result dimension is reported as `assessed: false` (it carries no
 status). A SPEC declares "no active task" in its frontmatter (`---` /
-`spec-state: idle` / `---` at the top of the file); a failure of the checker
-itself exits 2 and is never a PASS or N/A. Tests:
-`python3 -B -m unittest discover -s tests/docops -t tests/docops`.
+`spec-state: idle` / `---` at the top of the file). Exit codes (also
+`summary.exit_code`; the same list is in `--help`): 0 every evaluated check is
+PASS or N/A; 1 a violation, or a supplied impact report's required assessment is
+not complete; 2 the checker could not produce a verdict (usage, dependency, I/O,
+Git, policy or internal error: never a PASS or N/A; a usage error and a failure
+to render the output are printed on stderr only, a failure to write it leaves
+no result at all); 3 SPEC applicability
+cannot be established (1 takes precedence when both apply). When it reads the index
+(`--tree index`), Git itself runs the program named by the repository's own
+`core.fsmonitor` setting, if any; the checker neither starts nor disables it.
+Tests: `python3 -B -m unittest discover -s tests/docops -t tests/docops`.
 
 Tooling bootstrap (added by ADR-0015 — `docs/adr/0015-tooling-bootstrap-verify-materialize.md`).
 Also source only and listed in `MANIFEST.txt`; no consumer uses it yet, and
@@ -84,7 +92,18 @@ commit and each file's hash and mode, upgrades only files it recognises as
 its own earlier version, refuses to overwrite an edited managed file or an
 unmanaged file, never repins, and fetches the pinned commit only with
 `--allow-network` and only when it is absent locally. It installs nothing
-under `~/.claude`; global skills stay out of its scope. Tests:
+under `~/.claude`; global skills stay out of its scope. Exit codes (also
+`summary.exit_code`; the same list is in `--help`): 0 for `verify` when local
+integrity and provenance are both established, for `status` unless the tool
+fails, and for `materialize` when the plan is executable or was applied and
+verified; 1 when something is wrong or unestablished, a conflict is refused, an
+installation could not be verified afterwards, or the platform cannot write
+safely; 2 when the tool could not run (usage, Git, I/O or internal error, and
+for `materialize --apply` a platform without POSIX file locking).
+`--format json` prints a result that conforms to
+`schemas/tooling-result.schema.json`; if the package itself cannot be imported,
+only a minimal JSON object with `error.code` IMPORT_FAILED is printed, in any
+format. Tests:
 `python3 -B -m unittest discover -s tests/tooling -t tests/tooling`.
 
 `MANIFEST.txt` is longer than the seven mechanism files. By ADR-0006 and
@@ -159,9 +178,10 @@ when that commit is absent.
 
 ## Usage today (manual — no adapter exists yet)
 
-There is no client adapter. The only CLIs are the source-only
-`scripts/docops.py` and `scripts/tooling.py` described above, which no
-consumer has adopted yet. Until a consumer does, using ToolTempest in a
+There is no client adapter. Besides the hook entry points
+`scripts/doc_sync.py` and `scripts/doc_sync_tier2.py` that consumers already
+run, the CLIs are the source-only `scripts/docops.py` and `scripts/tooling.py`
+described above, which no consumer has adopted yet. Until a consumer does, using ToolTempest in a
 consuming project is a manual process, and differs by which part of the
 composition a project adopts.
 
