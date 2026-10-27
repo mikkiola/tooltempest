@@ -2,9 +2,10 @@
 
 ## Status
 
-Proposed, 2026-10-27. Implements the CI item of Stage 4 of the DocOps
-tooling redesign. Becomes Accepted when the Owner accepts the decisions
-below. It extends ADR-0005 and does not supersede or edit it: the
+Accepted, 2026-10-27. Implements the CI item of Stage 4 of the DocOps
+tooling redesign. Accepted by the Owner together with a clarification of
+Decision 5 (the local-testing policy) that restates the existing text and
+adds no new decision. It extends ADR-0005 and does not supersede or edit it: the
 scenario-suite workflow that ADR defines stays exactly as it is. It
 changes no repository setting and no consumer. Consequences and
 Confirmation & Revisit were updated on 2026-10-27 with the first observed
@@ -59,9 +60,13 @@ The first run has since been observed; see Confirmation & Revisit.
    scope.
 4. **Informational.** The workflow is not wired into branch protection as a
    required check, and nothing here changes a repository setting.
-5. **One Python version, 3.14.** ADR-0005's exact pin is kept. The suites
-   are run on Python 3.14.5 and 3.9.6 locally before each change is
-   committed; CI does not cover 3.9.
+5. **One Python version, 3.14.** ADR-0005's exact pin is kept. Local
+   testing: before committing a code change, run the tests relevant to that
+   change on both Python 3.14.5 and 3.9.6; for documentation-only commits,
+   run only the checks applicable to the touched files; run the full
+   integrated suites at the designated final-verification and release
+   gates. CI does not cover 3.9; revisit that if a consumer's hooks require
+   Python 3.9 (see Alternatives & Rationale).
 6. **What the `distribution` job judges.** Its tests read the checked-out
    `HEAD` and materialize that commit. On a pull request GitHub checks out
    a merge commit of the branch into `main`, so the candidate judged there
