@@ -98,9 +98,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         else:
             doc = document(evaluate(opts), command)
     except ToolFailure as exc:
-        doc = error_document(opts, command, exc.code, exc.message)
+        doc = error_document(opts, command, exc.code, exc.message, apply=bool(getattr(args, "apply", False)))
     except Exception as exc:  # noqa: BLE001 - fail closed on any tool fault
-        doc = error_document(opts, command, "INTERNAL_ERROR", "%s: %s" % (type(exc).__name__, exc))
+        doc = error_document(opts, command, "INTERNAL_ERROR", "%s: %s" % (type(exc).__name__, exc),
+                             apply=bool(getattr(args, "apply", False)))
     if args.format == "json":
         sys.stdout.write(json.dumps(doc, indent=2, sort_keys=True) + "\n")
     else:

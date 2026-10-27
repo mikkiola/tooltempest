@@ -592,8 +592,12 @@ def _file_record(item: Item) -> dict:
     }
 
 
-def error_document(opts: Options, command: str, code: str, message: str) -> dict:
-    return {
+def error_document(opts: Options, command: str, code: str, message: str, apply: bool = False) -> dict:
+    """The result document of a run that could not produce a verdict (exit 2). The schema
+    requires `result` for materialize, so it is present there: nothing was applied, and
+    `dry_run` says whether --apply was asked for (opts is None when the failure came
+    before the options could be built)."""
+    doc = {
         "schema_version": RESULT_SCHEMA_VERSION,
         "tool": {"name": TOOL_NAME, "version": TOOL_VERSION},
         "command": command,
@@ -606,6 +610,10 @@ def error_document(opts: Options, command: str, code: str, message: str) -> dict
         "freshness": None, "files": [], "skipped": [], "findings": [],
         "error": {"code": code, "message": message},
     }
+    if command == "materialize":
+        doc["result"] = {"dry_run": not (opts.apply if opts is not None else apply), "applied": False,
+                         "written": [], "receipt_written": False, "post_verification": None}
+    return doc
 
 
 # -- materialize ----------------------------------------------------------------------------
@@ -778,7 +786,17 @@ def _apply(ev: Evaluation, doc: dict, pending: List[Item], final: Receipt,
     result["applied"] = True
     result["written"] = written
     result["receipt_written"] = True
-    after = evaluate(ev.opts)
+    try:
+        after = evaluate(ev.opts)
+    except ToolFailure as exc:  # the files are installed: say so, and that they could not be verified
+        result["post_verification"] = {"local_integrity": "unknown", "upstream_provenance": "unknown",
+                                       "ok": False}
+        doc["summary"].update(local_integrity="unknown", upstream_provenance="unknown",
+                              errors=doc["summary"]["errors"] + 1, exit_code=1)
+        doc["findings"].append({"code": "POST_INSTALL_VERIFICATION_FAILED", "severity": "error", "path": None,
+                                "message": "the files were installed, but verifying them failed: %s: %s"
+                                % (exc.code, exc.message), "hint": "run verify for details"})
+        return doc
     local, provenance = properties(after)
     ok = local == "ok" and provenance == "ok" and not [
         f for f in after.findings + after.state_findings if f["severity"] == "error"]
