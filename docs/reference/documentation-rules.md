@@ -651,6 +651,26 @@ loosen the rule. This is enforced mechanically by a destination-
 invariant script wired into a pre-push hook, not left as a prose-only
 expectation. BACKLOG.md is exempt (see BACKLOG.md's own section above).
 
+### ADR content boundary
+
+An ADR records a decision, its rationale, and the invariants that follow
+from it. It doesn't record the state of the repository at a point in
+time, except as labelled evidence.
+
+- Don't put commit-bound facts in the Decision section. Examples:
+  counts, hashes, line numbers, and paths that are valid at one commit
+  only.
+- State an observation that the decision depends on in the Context &
+  Constraints section. Label it with the tool version or commit it was
+  taken at.
+- Record confirmation evidence, such as test output or a real command
+  run, in the Confirmation & Revisit section, as that section describes.
+  Label it with the command and the commit it ran at.
+- Keep all other snapshots out of the ADR. Put them in the commit
+  message or in a log file outside the ADR.
+- Don't state a claim about repository state unless you can reproduce it
+  with a stated command or cite a source. Otherwise, remove the claim.
+
 ---
 
 ## 7. `docs/adr/ADR-INDEX.md`
