@@ -114,6 +114,18 @@ order:**
    the same commit if it reports a mismatch. Repinning
    `.tooltempest.lock` to pick up the change is a separate, deliberate
    action, never automatic.
+
+   Updating a consumer's pin (a repin) is a routine autonomous step
+   within a task. It needs no separate Owner decision when the evidence
+   shows no behavior change for the consumer: the checker of the new
+   commit gives the same verdicts on the consumer's committed tree; the
+   payload paths that differ are within the manifest and the materialize
+   dry run shows no conflict; and `tooling.py verify` exits 0. Otherwise
+   the repin needs an Owner decision. Every repin is reported with this
+   evidence. A repin never runs automatically because ToolTempest
+   changed; it is an explicit step of a task. _Dated note (2026-11-03,
+   repin policy): this paragraph states when a repin needs an Owner
+   decision; the sentence before it is unchanged._
 8. **Conditional rules** — how the agent handles mid-task scoped
    decisions (proceed and report vs. stop and ask), and how external
    AI cross-checks must be drafted (neutrally, without steering toward
