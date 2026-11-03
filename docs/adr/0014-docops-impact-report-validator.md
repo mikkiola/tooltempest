@@ -2,9 +2,10 @@
 
 ## Status
 
-Proposed, 2026-10-22. Implements Stage 2 of the DocOps tooling redesign
-(simplified change-impact review). Becomes Accepted when the Owner
-accepts the decisions below. Amended in place on 2026-11-03, still
+Accepted, 2026-11-03 (first proposed 2026-10-22). Implements Stage 2 of the
+DocOps tooling redesign (simplified change-impact review). Accepted by the
+Owner in the form amended on 2026-11-03; the dated notes below record the
+state when they were written. Amended in place on 2026-11-03, still
 Proposed: the ADR rules in `docs/reference/documentation-rules.md` say an ADR
 "is never edited after acceptance", and this record has not been accepted.
 The amendment replaces the candidate-path rule in Decision 2, the exit 3

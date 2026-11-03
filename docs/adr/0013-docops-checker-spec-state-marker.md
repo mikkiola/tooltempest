@@ -2,9 +2,10 @@
 
 ## Status
 
-Proposed, 2026-10-21. Implements Stage 1 of the DocOps tooling redesign
-(pure shared parser, policy, tree reader and error schema). Becomes
-Accepted when the Owner accepts the decisions below. Does not supersede
+Accepted, 2026-11-03 (first proposed 2026-10-21). Implements Stage 1 of the
+DocOps tooling redesign (pure shared parser, policy, tree reader and error
+schema). Accepted by the Owner in the form amended on 2026-11-03; the dated
+notes below record the state when they were written. Does not supersede
 or modify any earlier ADR; `scripts/doc_sync.py`, `scripts/doc_sync_tier2.py`
 and the consumers' copies of `verify.py` are untouched and keep working
 until a later stage retires them.
