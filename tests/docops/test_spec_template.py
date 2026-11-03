@@ -36,6 +36,67 @@ def canonical_block(path):
     return sole_markdown_block(path.read_text(encoding="utf-8"), str(path.relative_to(REPO_ROOT)))
 
 
+class SpecSkillLocationTests(unittest.TestCase):
+    """The /spec skill is an instruction to a model, so what it makes the model do cannot be
+    tested here. These tests pin only the instruction text: the skill must tell the model to
+    resolve the repository root from the Git top level, to write or update the root SPEC.md
+    only, and never to create a nested or second SPEC.md, and must not tell it to use the
+    current directory. They cannot show that a model follows the text."""
+
+    def setUp(self):
+        self.text = SPEC_SKILL.read_text(encoding="utf-8")
+        self.frontmatter, body = self.text.split("\n---\n", 1)
+        self.body = " ".join(body.split())  # line wrapping is not part of the instruction
+
+    def test_the_skill_resolves_the_root_from_the_git_top_level_not_the_current_directory(self):
+        self.assertIn("git rev-parse --show-toplevel", self.body)
+        self.assertIn("not from the current directory", self.body)
+        self.assertNotIn("exists in the current directory", self.body)
+
+    def test_the_skill_writes_only_the_root_spec_and_never_a_second_one(self):
+        self.assertIn("`SPEC.md` at the repository root", self.body)
+        self.assertIn("Never create a nested or second `SPEC.md`", self.body)
+        self.assertIn(".docops-policy.json", self.body)
+        self.assertIn("root `SPEC.md` of Step 1", self.body)  # Step 4 writes to the Step 1 file
+
+    def test_the_only_shell_permission_is_the_git_root_lookup(self):
+        line = next(l for l in self.frontmatter.splitlines() if l.startswith("allowed-tools:"))
+        tools = [t.strip() for t in line.split(":", 1)[1].split(",")]
+        self.assertEqual(tools, ["Read", "Write", "Edit", "Bash(git rev-parse --show-toplevel)"])
+
+
+class DocSyncSkillTests(unittest.TestCase):
+    """The doc-sync skill must describe the shared checker as the current mechanism and the
+    legacy hooks only as a legacy path. Text-level only: the tests cannot show that the
+    description is true of a given consumer's hooks."""
+
+    def setUp(self):
+        text = (Path(REPO_ROOT) / "skills" / "doc-sync" / "SKILL.md").read_text(encoding="utf-8")
+        self.text = " ".join(text.split())
+
+    def test_it_describes_the_shared_checker_its_exit_codes_and_the_unregistered_spec_rule(self):
+        for fragment in ("scripts/docops.py check --tree index", "scripts/docops.py check --push-stdin",
+                         "OUT_OF_SCOPE_SPEC", "Any other `SPEC.md` is a FAIL (exit 1)",
+                         "The root `SPEC.md` is always evaluated", "non_active_specs",
+                         "| 0 |", "| 1 |", "| 2 |", "| 3 |"):
+            self.assertIn(fragment, self.text)
+
+    def test_it_states_the_absent_root_rule_with_its_exception_and_the_extra_fail_cases(self):
+        for fragment in ("is absent and no policy entry names it", "`SPEC_MISSING`",
+                         "`SPEC_IS_DIRECTORY`", "a track named `root` at another path"):
+            self.assertIn(fragment, self.text)
+        self.assertNotIn("If the root `SPEC.md` is absent, there is no SPEC", self.text)
+
+    def test_it_says_the_checker_writes_no_run_record(self):
+        self.assertIn("writes no run record", self.text)
+        self.assertIn("no `.tempest/runs/` record", self.text)
+
+    def test_the_legacy_hooks_are_described_as_a_legacy_path_not_as_the_active_one(self):
+        self.assertIn("legacy path (consumers whose hooks still call `doc_sync.py`)".lower(), self.text.lower())
+        self.assertIn("applies only to a project whose own hooks still run `scripts/doc_sync.py`", self.text)
+        self.assertNotIn("runs automatically from a consuming project's own", self.text)
+
+
 class SpecFormatTests(DocopsTestCase):
     def check_spec(self, content):
         """Commit `content` as SPEC.md and return (exit code, SPEC_STRUCTURE check)."""

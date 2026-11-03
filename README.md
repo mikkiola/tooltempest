@@ -44,8 +44,9 @@ does not compromise client independence (below).
 DocOps checker (added by ADR-0013 — `docs/adr/0013-docops-checker-spec-state-marker.md` —
 and extended by ADR-0014 — `docs/adr/0014-docops-impact-report-validator.md`).
 It is source only: tracked and listed in `MANIFEST.txt`, but not part of the
-seven-file Composition (V2) above and not adopted by any consumer, which keep
-using `doc_sync.py` until they migrate.
+seven-file Composition (V2) above. A consumer adopts it by pinning a commit and
+wiring its own hooks; a consumer whose hooks still call `doc_sync.py` has not
+migrated. A change here changes no consumer until that consumer repins.
 - `scripts/docops.py` — read-only `check` / `report` of an exact Git snapshot
   (`--tree index|<commit>`, `--push-stdin`), optionally validating an
   impact report that a reviewer wrote (`--impact-file PATH|-`); never
@@ -59,14 +60,28 @@ report is well-formed, bound to the snapshot under check, complete against
 the change and current, and never whether its statements are true. Every
 other result dimension is reported as `assessed: false` (it carries no
 status). A SPEC declares "no active task" in its frontmatter (`---` /
-`spec-state: idle` / `---` at the top of the file). Exit codes (also
+`spec-state: idle` / `---` at the top of the file). The root `SPEC.md` is
+always evaluated, exactly once, with or without a policy file. An optional
+`.docops-policy.json` adds registered active tracks (`specs`) and lists
+non-active files (`non_active_specs`: exact path and reason, such as a test
+fixture); an explicit root entry stays valid. Every tracked file named
+`SPEC.md` (any depth, case-insensitive) must be the root SPEC, a registered
+active track or a listed non-active file; any other is a FAIL (exit 1) that
+names the path, as are a path in two categories, a duplicate or stale
+non-active entry, a registered path that is a directory, and a track named
+`root` at another path beside a root `SPEC.md` (only when the policy has no
+explicit root entry). Other spellings such as
+`SPEC.txt` are not detected. An absent root `SPEC.md` that no policy entry
+names is not a failure of this check (no SPEC: N/A); an explicit policy entry
+for an absent root is a FAIL (`SPEC_MISSING`). Exit codes (also
 `summary.exit_code`; the same list is in `--help`): 0 every evaluated check is
 PASS or N/A; 1 a violation, or a supplied impact report's required assessment is
 not complete; 2 the checker could not produce a verdict (usage, dependency, I/O,
 Git, policy or internal error: never a PASS or N/A; a usage error and a failure
 to render the output are printed on stderr only, a failure to write it leaves
 no result at all); 3 SPEC applicability
-cannot be established (1 takes precedence when both apply). When it reads the index
+cannot be established (defined, but no SPEC scope rule produces it any more;
+1 takes precedence when both apply). When it reads the index
 (`--tree index`), Git itself runs the program named by the repository's own
 `core.fsmonitor` setting, if any; the checker neither starts nor disables it.
 Tests: `python3 -B -m unittest discover -s tests/docops -t tests/docops`.
@@ -148,8 +163,20 @@ or any other client-specific directory. Isolating the differences
 between consuming tools (Claude Code, and potentially others such as
 Cursor, Codex, or Windsurf in the future) is expected to be the job of
 a separate CLI adapter layer. That adapter has not been built yet —
-its design is a separate, future task and is out of scope for this
-repository as it stands today.
+its design is a separate task and is out of scope for this repository as it
+stands today.
+
+**Delivery of skills and rules to a client.** Installing the pinned `skills/`
+and `rules/` files into a client's configuration directory (for Claude Code,
+`~/.claude`) is the job of that separate client adapter. The adapter does not
+exist yet and is the next planned component; it is to install the pinned files
+and verify them against the pinned commit. ToolTempest itself delivers nothing
+to a client directory: `scripts/tooling.py` installs only `scripts/` and
+`schemas/` into a consumer repository, and the checker never writes outside
+the repository it inspects. Until the adapter exists, a client's installed
+copies are put in place by hand or by a consumer's own installer, so they can
+differ from the pinned files; compare them with the pinned commit before
+relying on them.
 
 ## Update model
 

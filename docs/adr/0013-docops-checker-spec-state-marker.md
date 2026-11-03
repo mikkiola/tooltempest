@@ -15,7 +15,9 @@ acceptance ("an ADR is never edited after acceptance"); this record has not
 been accepted. The amendment replaces Decision 7 and the "Default scope"
 alternatives row, adds three alternatives rows and a Consequences bullet,
 rewrites one Consequences bullet and one sentence of Decision 9, and adds a
-Confirmation note and a closing Source paragraph.
+Confirmation note and a closing Source paragraph. A later clarification of the
+same day adds to Decision 7 how a duplicate `specs` entry, a track named `root`
+and a directory named `SPEC.md` are treated.
 The earlier Decision 7 (a `spec.md` outside the registry is a warning; the
 implicit root track exists only without a policy; an idle or empty scope
 with an unlisted `spec.md` is SKIP) is replaced, not kept as an alternative
@@ -223,9 +225,15 @@ no lock is repinned in this stage.
    non-active file. Any other `SPEC.md` is a FAIL that names the path and
    the rule (code `OUT_OF_SCOPE_SPEC`, kept from the earlier version of
    this decision). These are also each a FAIL: a path in two categories, a
-   duplicate entry, the root `SPEC.md` listed as non-active, a non-active
-   entry without a reason, and a non-active entry whose file no longer
-   exists. A registered path absent from the snapshot is a FAIL; a
+   duplicate `non_active_specs` entry, the root `SPEC.md` listed as
+   non-active, a non-active entry without a reason, a non-active entry
+   whose file no longer exists, and a registered track named `root` at a
+   path other than the root `SPEC.md` while a root `SPEC.md` exists
+   without an explicit root entry. A duplicate path or track name in
+   `specs` stays an invalid policy, a tool failure (exit 2) as before, not
+   a FAIL; it is never a pass either. Only files are inventoried: a
+   directory that happens to be named `SPEC.md` is not a tracked file. A
+   registered path absent from the snapshot is a FAIL; a
    directory at a SPEC path is a FAIL and at the policy path a tool
    failure, never "absent". A case that cannot be classified, and any
    invalid, conflicting or stale classification, never produces a PASS or

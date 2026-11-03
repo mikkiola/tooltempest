@@ -3,7 +3,7 @@ name: spec
 description: "SPEC-based development interview — generates a detailed SPEC.md specification through in-depth questions. Triggers on: spec, specification, interview, feature design. NOT for: direct implementation, simple edits, writing code."
 user-invocable: true
 disable-model-invocation: true
-allowed-tools: Read, Write, Edit
+allowed-tools: Read, Write, Edit, Bash(git rev-parse --show-toplevel)
 ---
 
 ## CRITICAL MODEL/AUTH RESTRICTION
@@ -41,11 +41,24 @@ Constitution and ADR have higher authority than SPEC. Identify conflicts and
 raise them to the Owner for resolution rather than silently choosing an
 interpretation. Do not encode an unresolved conflict as a new requirement.
 
-### Step 1: Check for or Create SPEC.md
+### Step 1: Locate the Root SPEC.md
 
-Check whether SPEC.md exists in the current directory.
-- If it exists: read the file and start the interview
-- If not: ask the user for the basic idea, then create a draft
+A repository has one project SPEC: `SPEC.md` at the repository root. This
+skill creates or updates only that file.
+
+1. Resolve the root from the Git top level (`git rev-parse --show-toplevel`),
+   not from the current directory. If you are not inside a Git repository, or
+   the command cannot be run, stop and ask the user which repository root to
+   use. Do not fall back to the current directory.
+2. If `<root>/SPEC.md` exists: read it and start the interview. The
+   specification you write in Step 4 replaces its content in the same file.
+3. If it does not exist: ask the user for the basic idea, then create the
+   draft at `<root>/SPEC.md`.
+4. Never create a nested or second `SPEC.md`, in a subdirectory, in a
+   component folder or under another spelling. If the user asks for a SPEC for
+   a component or a parallel track, stop and say that this skill writes only
+   the root SPEC and that any additional SPEC file needs an explicit entry in
+   the repository's `.docops-policy.json`, which the owner decides.
 
 ### Step 2: In-Depth Interview
 
@@ -80,7 +93,9 @@ Check whether SPEC.md exists in the current directory.
 
 ### Step 4: Write the Specification
 
-After the interview is complete, update the SPEC.md file in detail:
+After the interview is complete, write the specification to the root
+`SPEC.md` of Step 1 in detail. Do not keep `spec-state: idle` frontmatter from
+an earlier idle SPEC in a SPEC for active work:
 
 ```markdown
 # Feature Name Specification

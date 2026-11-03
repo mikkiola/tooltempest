@@ -171,28 +171,43 @@ order:**
     Radar; no project has its own SPEC lifecycle. `SPEC.md` is
     living/overwritten by each new `/spec` session (not accumulated),
     full history recoverable via `git log`, not kept in the file
-    itself. By default the one SPEC is the root-level `SPEC.md`; a
-    repository with several tracks, or a SPEC away from the root,
-    registers each track's path in an optional `.docops-policy.json`,
-    and the DocOps checker evaluates exactly the registered tracks. A
-    check of the SPEC state has these cases:
-    - **No SPEC at all** (nothing registered and no `SPEC.md`
-      anywhere): the normal "no active SPEC" state. The SPEC check is
-      N/A, neither FAIL nor PASS.
+    itself. Every repository has one project SPEC, the root-level
+    `SPEC.md`, and the DocOps checker always evaluates it, with or
+    without a policy file; the `/spec` skill creates or updates only that
+    file. An additional SPEC file (a repository with a second track, or a
+    SPEC away from the root) exists only through an explicit entry in the
+    optional `.docops-policy.json`: a registered active track, or a
+    listed non-active file (a test fixture or historical material, by
+    exact path and with a reason). The checker inventories every tracked
+    file named `SPEC.md`, at any depth and in any letter case, and each
+    must be exactly one of: the root SPEC, a registered active track, or
+    a listed non-active file. A check of the SPEC state has these cases:
+    - **No SPEC at all** (no root `SPEC.md`, nothing registered and no
+      `SPEC.md` anywhere): the normal "no active SPEC" state. The SPEC
+      check is N/A, neither FAIL nor PASS. Making the absence of the
+      root SPEC a failure is a separate decision, not part of this rule.
+      (A policy entry that names the root `SPEC.md` while the file is
+      absent is a registered path that is absent: FAIL.)
     - **A SPEC that declares there is no active task** (frontmatter
       `spec-state: idle`): the same state, N/A. A project that keeps
       the file between tasks marks it idle; it does not state a
       project-specific exception here.
-    - **A SPEC outside the registered scope**, so not evaluated, while
-      nothing in scope is active: not N/A. "No active task" is proven
-      only for the registered tracks, so the result is SKIP with the
-      reason stated.
+    - **A `SPEC.md` that is in none of the three categories** (not the
+      root, not registered, not listed as non-active): FAIL, naming the
+      path and the rule. So are a path in two categories, a duplicate
+      list entry, the root listed as non-active, a non-active entry
+      without a reason, an entry for a file that no longer exists, a
+      registered path that is a directory, and (only when the policy has
+      no explicit root entry) a track named `root` at another path beside
+      a root `SPEC.md`. Such a file is never skipped silently and never
+      lets the check pass or become N/A. Other spellings such as
+      `SPEC.txt` are not detected.
     - **A registered SPEC that is absent:** FAIL.
     - **A SPEC for active work:** it must meet the common structural
       contract: PASS if it does, FAIL if it does not.
     - **A SPEC that is corrupted or unreadable, or checking code that
       is unavailable or did not run:** this is not "no SPEC". The
-      result is FAIL, or SKIP with the reason stated; never N/A and
+      result is FAIL, or a tool error with no verdict; never N/A and
       never PASS. When the checker cannot reach any verdict (an
       unreadable object, an invalid registry, a Git or internal
       error) it reports a tool error, with no per-check status and a
@@ -208,7 +223,13 @@ order:**
     project-specific exception is replaced by the policy above; the
     idle declaration is the one mechanism for a SPEC that stays in the
     repository between tasks. The superseded wording is kept in the
-    file's Git history._
+    file's Git history._ _Dated note (2026-11-03, root SPEC and SPEC
+    inventory): this item used to say that the checker "evaluates
+    exactly the registered tracks", that the root `SPEC.md` was the
+    default only when no policy file existed, and that a `SPEC.md`
+    outside the registered scope gave SKIP. It now says that the root
+    SPEC is always evaluated and that every `SPEC.md` is classified or
+    the check FAILs; the earlier wording stays in Git history._
 14. **ADR discipline** — see the full ADR section below; this section
     of CONSTITUTION.md states the citation rule (no ADR-number citation
     in ARCHITECTURE.md/ROADMAP.md/CONSTITUTION.md — describe the
