@@ -212,6 +212,7 @@
         "reason",
         "policy",
         "tracks",
+        "non_active_specs",
         "diagnostics"
       ],
       "properties": {
@@ -249,6 +250,27 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/track"
+          },
+          "description": "The root SPEC (when present, or when the policy names it) first, evaluated exactly once, then the registered active tracks."
+        },
+        "non_active_specs": {
+          "type": "array",
+          "description": "Validly listed non-active SPEC files (policy `non_active_specs`): classified, not evaluated.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path",
+              "reason"
+            ],
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
+            }
           }
         },
         "diagnostics": {
@@ -256,7 +278,7 @@
           "items": {
             "$ref": "#/$defs/diagnostic"
           },
-          "description": "Check-level warnings, e.g. OUT_OF_SCOPE_SPEC."
+          "description": "Check-level findings. Each one makes the check FAIL: a file named SPEC.md in no valid category (OUT_OF_SCOPE_SPEC), a classification conflict (SPEC_CLASSIFICATION_CONFLICT, ROOT_LISTED_NON_ACTIVE, NON_ACTIVE_DUPLICATE), a non-active entry without a reason (NON_ACTIVE_REASON_MISSING), or a stale or non-file entry (NON_ACTIVE_STALE, NON_ACTIVE_NOT_A_FILE). ADR-0013 Decision 7."
         }
       }
     },

@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "specs": [],
+  "non_active_specs": [
+    {"path": "tests/fixtures/SPEC.md", "reason": "Fixture used by checker tests; not a project specification."}
+  ]
+}

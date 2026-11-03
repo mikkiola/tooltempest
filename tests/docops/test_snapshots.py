@@ -41,6 +41,22 @@ def policy_json(*specs):
                        "specs": [{"path": p, "track": t} for p, t in specs]})
 
 
+def policy_doc(specs=(), non_active=None):
+    """A policy document; `non_active` is the raw `non_active_specs` value (None: key absent)."""
+    document = {"schema_version": 1, "specs": [{"path": p, "track": t} for p, t in specs]}
+    if non_active is not None:
+        document["non_active_specs"] = non_active
+    return json.dumps(document)
+
+
+def listed(path, reason="Not a project specification."):
+    return {"path": path, "reason": reason}
+
+
+def finding_codes(result):
+    return [d["code"] for d in result["checks"]["SPEC_STRUCTURE"]["diagnostics"]]
+
+
 class SnapshotSelectionTests(DocopsTestCase):
     def test_index_not_worktree_unstaged_damage_is_invisible(self):
         with GitFixture() as fx:
@@ -327,18 +343,20 @@ class RegisteredTrackTests(DocopsTestCase):
 
     def test_index_uses_staged_policy_and_commit_uses_committed_policy(self):
         with GitFixture() as fx:
-            fx.commit_files({".docops-policy.json": policy_json(("SPEC.md", "a")),
+            fx.commit_files({".docops-policy.json": policy_doc([("SPEC.md", "a")],
+                                                                [listed("other/SPEC.md")]),
                              "SPEC.md": GOOD_SPEC, "other/SPEC.md": BAD_SPEC})
             fx.stage(".docops-policy.json", policy_json(("SPEC.md", "a"), ("other/SPEC.md", "o")))
-            self.assertEqual(spec_status(check(fx, "HEAD")), "PASS")
-            self.assertEqual(spec_status(check(fx, "index")), "FAIL")
+            self.assertEqual(spec_status(check(fx, "HEAD")), "PASS")   # committed: listed non-active
+            self.assertEqual(spec_status(check(fx, "index")), "FAIL")  # staged: an active, broken track
 
     def test_untracked_policy_on_disk_is_ignored(self):
         with GitFixture() as fx:
             fx.commit_files({"SPEC.md": GOOD_SPEC, "other/SPEC.md": BAD_SPEC})
-            fx.write(".docops-policy.json", policy_json(("other/SPEC.md", "o")))
+            fx.write(".docops-policy.json", policy_doc(non_active=[listed("other/SPEC.md")]))
             result = check(fx, "index")
             self.assertEqual(result["checks"]["SPEC_STRUCTURE"]["policy"]["source"], "default")
+            self.assertEqual(spec_status(result), "FAIL")  # the untracked listing does not count
 
     def test_invalid_policy_is_error_not_default(self):
         with GitFixture() as fx:
@@ -355,52 +373,302 @@ class RegisteredTrackTests(DocopsTestCase):
             self.assertToolError(check(fx, "index"))
 
 
-class ScopeTests(DocopsTestCase):
-    def test_nested_spec_beside_good_root_is_reported_not_silently_skipped(self):
-        with GitFixture() as fx:
-            fx.commit_files({"SPEC.md": GOOD_SPEC, "a/b/SPEC.md": BAD_SPEC})
-            check_ = check(fx, "HEAD")["checks"]["SPEC_STRUCTURE"]
-            self.assertEqual(check_["status"], "PASS")
-            self.assertEqual([d["code"] for d in check_["diagnostics"]], ["OUT_OF_SCOPE_SPEC"])
-            self.assertIn("a/b/SPEC.md", check_["diagnostics"][0]["message"])
+class ClassificationTests(DocopsTestCase):
+    """ADR-0013 Decision 7 (amended): the root SPEC.md is always evaluated, and every file named
+    SPEC.md is exactly one of root / registered active / listed non-active, or the check FAILs."""
 
-    def test_idle_root_does_not_hide_a_broken_unregistered_spec(self):
+    def assertFails(self, files, code=None, tree="HEAD"):
         with GitFixture() as fx:
-            fx.commit_files({"SPEC.md": IDLE_SPEC, "docs/x/SPEC.md": "# open\n\n- [ ] open item\n"})
+            fx.commit_files(files)
+            result = check(fx, tree)
+            self.assertEqual(spec_status(result), "FAIL", result["checks"])
+            self.assertEqual(result["exit_code"], 1)
+            if code is not None:
+                self.assertIn(code, finding_codes(result))
+            return result
+
+    # -- the root SPEC ---------------------------------------------------------------------------
+    def test_a_root_spec_alone_passes_with_and_without_a_policy(self):
+        for extra in ({}, {".docops-policy.json": policy_doc()},
+                      {".docops-policy.json": policy_doc(non_active=[])}):
+            with GitFixture() as fx:
+                fx.commit_files({"SPEC.md": GOOD_SPEC, **extra})
+                result = check(fx, "HEAD")
+                self.assertEqual(spec_status(result), "PASS", extra)
+                self.assertEqual([t["track"] for t in result["checks"]["SPEC_STRUCTURE"]["tracks"]],
+                                 ["root"])
+                self.assertEqual(finding_codes(result), [])
+
+    def test_a_policy_that_omits_the_root_still_evaluates_it(self):
+        # before the amendment a policy registering only another SPEC dropped the root
+        with GitFixture() as fx:
+            fx.commit_files({".docops-policy.json": policy_json(("v/SPEC.md", "v")),
+                             "SPEC.md": BAD_SPEC, "v/SPEC.md": GOOD_SPEC})
             result = check(fx, "HEAD")
-            self.assertEqual(spec_status(result), "SKIP")
-            self.assertEqual(result["exit_code"], 3)
-            self.assertEqual(tracks(result)["root"]["status"], "N/A")  # still reported per track
+            self.assertEqual(spec_status(result), "FAIL")
+            self.assertEqual(tracks(result)["root"]["status"], "FAIL")
+            self.assertEqual(tracks(result)["v"]["status"], "PASS")
 
-    def test_only_a_nested_spec_is_skip_never_na(self):
-        with GitFixture() as fx:
-            fx.commit_files({"deep/er/SPEC.md": GOOD_SPEC})
+    def test_an_explicit_root_entry_is_the_root_evaluated_once_without_duplicate_findings(self):
+        for name in ("root", "runner"):
+            with GitFixture() as fx:
+                fx.commit_files({".docops-policy.json": policy_json(("SPEC.md", name)),
+                                 "SPEC.md": GOOD_SPEC})
+                result = check(fx, "HEAD")
+                self.assertEqual(spec_status(result), "PASS", name)
+                self.assertEqual([t["track"] for t in result["checks"]["SPEC_STRUCTURE"]["tracks"]],
+                                 [name])
+                self.assertEqual(finding_codes(result), [])
+        with GitFixture() as fx:  # a broken root named explicitly yields one failing track only
+            fx.commit_files({".docops-policy.json": policy_json(("SPEC.md", "root")),
+                             "SPEC.md": BAD_SPEC})
             result = check(fx, "HEAD")
-            self.assertEqual(spec_status(result), "SKIP")
-            self.assertEqual(result["exit_code"], 3)
-            self.assertEqual(result["checks"]["SPEC_STRUCTURE"]["tracks"], [])
+            self.assertEqual(len(result["checks"]["SPEC_STRUCTURE"]["tracks"]), 1)
+            self.assertEqual(finding_codes(result), [])
 
-    def test_one_level_child_spec_needs_registration(self):
-        with GitFixture() as fx:
-            fx.commit_files({"verification/SPEC.md": BAD_SPEC})
-            self.assertEqual(spec_status(check(fx, "HEAD")), "SKIP")
-            fx.commit_files({".docops-policy.json": policy_json(("verification/SPEC.md", "v"))})
-            self.assertEqual(spec_status(check(fx, "HEAD")), "FAIL")  # now in scope, and bad
+    def test_an_absent_root_is_unchanged_by_this_rule(self):
+        with GitFixture() as fx:  # no policy, no root: N/A as before
+            fx.commit_files({"README.md": "x\n"})
+            self.assertEqual(spec_status(check(fx, "HEAD")), "N/A")
+        with GitFixture() as fx:  # a policy that does not name the root: still N/A
+            fx.commit_files({".docops-policy.json": policy_doc(), "README.md": "x\n"})
+            self.assertEqual(spec_status(check(fx, "HEAD")), "N/A")
+        with GitFixture() as fx:  # a policy that names the absent root: FAIL, as for any registered path
+            fx.commit_files({".docops-policy.json": policy_json(("SPEC.md", "root")),
+                             "README.md": "x\n"})
+            result = check(fx, "HEAD")
+            self.assertEqual(spec_status(result), "FAIL")
+            self.assertEqual(tracks(result)["root"]["diagnostics"][0]["code"], "SPEC_MISSING")
 
-    def test_empty_registry_with_a_spec_present_is_skip(self):
-        with GitFixture() as fx:
-            fx.commit_files({".docops-policy.json": policy_json(), "SPEC.md": IDLE_SPEC})
-            self.assertEqual(spec_status(check(fx, "HEAD")), "SKIP")
+    # -- unclassified files ----------------------------------------------------------------------
+    def test_a_root_plus_an_unlisted_nested_spec_fails_and_names_the_path_and_rule(self):
+        result = self.assertFails({"SPEC.md": GOOD_SPEC, "a/b/SPEC.md": GOOD_SPEC},
+                                  "OUT_OF_SCOPE_SPEC")
+        message = result["checks"]["SPEC_STRUCTURE"]["diagnostics"][0]["message"]
+        self.assertIn("a/b/SPEC.md", message)
+        self.assertIn("non_active_specs", message)
+        self.assertEqual(tracks(result)["root"]["status"], "PASS")  # the root is still evaluated
 
-    def test_empty_registry_without_any_spec_is_na(self):
+    def test_an_idle_root_does_not_hide_an_unlisted_spec(self):
+        self.assertFails({"SPEC.md": IDLE_SPEC, "docs/x/SPEC.md": "# open\n\n- [ ] open item\n"},
+                         "OUT_OF_SCOPE_SPEC")
+
+    def test_only_a_nested_spec_fails_never_na_and_never_skip(self):
+        result = self.assertFails({"deep/er/SPEC.md": GOOD_SPEC}, "OUT_OF_SCOPE_SPEC")
+        self.assertEqual(result["checks"]["SPEC_STRUCTURE"]["tracks"], [])
+
+    def test_the_name_is_matched_case_insensitively_at_any_depth_and_other_names_are_not(self):
+        for path in ("docs/spec.md", "docs/Spec.MD", "a/b/c/d/SPEC.md", "spec.md"):
+            with self.subTest(path):
+                self.assertFails({path: GOOD_SPEC}, "OUT_OF_SCOPE_SPEC")
         with GitFixture() as fx:
-            fx.commit_files({".docops-policy.json": policy_json(), "README.md": "x\n"})
+            fx.commit_files({"SPEC.txt": "x\n", "docs/SPECIFICATION.md": "x\n"})
             self.assertEqual(spec_status(check(fx, "HEAD")), "N/A")
 
-    def test_lowercase_spec_name_is_also_reported(self):
+    def test_a_registered_nested_spec_needs_no_listing(self):
         with GitFixture() as fx:
-            fx.commit_files({"docs/spec.md": GOOD_SPEC})
-            self.assertEqual(spec_status(check(fx, "HEAD")), "SKIP")
+            fx.commit_files({"verification/SPEC.md": BAD_SPEC})
+            self.assertEqual(spec_status(check(fx, "HEAD")), "FAIL")  # unclassified
+            fx.commit_files({".docops-policy.json": policy_json(("verification/SPEC.md", "v")),
+                             "verification/SPEC.md": GOOD_SPEC})
+            self.assertEqual(spec_status(check(fx, "HEAD")), "PASS")
+
+    # -- explicitly listed non-active files ------------------------------------------------------
+    def test_a_nested_spec_listed_as_non_active_passes_and_is_reported(self):
+        with GitFixture() as fx:
+            fx.commit_files({"SPEC.md": GOOD_SPEC, "docs/old/SPEC.md": BAD_SPEC,
+                             ".docops-policy.json": policy_doc(
+                                 non_active=[listed("docs/old/SPEC.md", "Historical material.")])})
+            result = check(fx, "HEAD")
+            structure = result["checks"]["SPEC_STRUCTURE"]
+            self.assertEqual(spec_status(result), "PASS")
+            self.assertEqual(structure["non_active_specs"],
+                             [{"path": "docs/old/SPEC.md", "reason": "Historical material."}])
+            self.assertEqual(structure["diagnostics"], [])
+            self.assertEqual([t["track"] for t in structure["tracks"]], ["root"])  # not evaluated
+
+    def test_a_classified_fixture_passes(self):
+        with GitFixture() as fx:
+            fx.commit_files({"SPEC.md": GOOD_SPEC, "tests/fixtures/SPEC.md": "not a spec\n",
+                             ".docops-policy.json": policy_doc(
+                                 non_active=[listed("tests/fixtures/SPEC.md",
+                                                    "Fixture used by checker tests; "
+                                                    "not a project specification.")])})
+            self.assertEqual(spec_status(check(fx, "HEAD")), "PASS")
+
+    def test_a_policy_with_only_non_active_entries_does_not_skip(self):
+        fixture_policy = policy_doc(non_active=[listed("tests/fixtures/SPEC.md")])
+        with GitFixture() as fx:  # no root: N/A, exactly as without a policy, never SKIP
+            fx.commit_files({"tests/fixtures/SPEC.md": "x\n", ".docops-policy.json": fixture_policy})
+            result = check(fx, "HEAD")
+            self.assertEqual((spec_status(result), result["exit_code"]), ("N/A", 0))
+        with GitFixture() as fx:  # with a root: evaluated as without a policy
+            fx.commit_files({"SPEC.md": GOOD_SPEC, "tests/fixtures/SPEC.md": "x\n",
+                             ".docops-policy.json": fixture_policy})
+            self.assertEqual(spec_status(check(fx, "HEAD")), "PASS")
+        with GitFixture() as fx:
+            fx.commit_files({"SPEC.md": IDLE_SPEC, "tests/fixtures/SPEC.md": "x\n",
+                             ".docops-policy.json": fixture_policy})
+            self.assertEqual(spec_status(check(fx, "HEAD")), "N/A")
+
+    # -- invalid, conflicting and stale classifications -----------------------------------------
+    def test_a_path_that_is_both_active_and_non_active_fails(self):
+        self.assertFails({"SPEC.md": GOOD_SPEC, "v/SPEC.md": GOOD_SPEC,
+                          ".docops-policy.json": policy_doc([("v/SPEC.md", "v")],
+                                                            [listed("v/SPEC.md")])},
+                         "SPEC_CLASSIFICATION_CONFLICT")
+
+    def test_a_duplicate_non_active_entry_fails(self):
+        result = self.assertFails({"SPEC.md": GOOD_SPEC, "f/SPEC.md": "x\n",
+                                   ".docops-policy.json": policy_doc(
+                                       non_active=[listed("f/SPEC.md"), listed("f/SPEC.md", "again")])},
+                                  "NON_ACTIVE_DUPLICATE")
+        self.assertEqual(finding_codes(result).count("NON_ACTIVE_DUPLICATE"), 1)
+
+    def test_a_non_active_entry_without_a_reason_fails(self):
+        for entry in ({"path": "f/SPEC.md"}, {"path": "f/SPEC.md", "reason": ""},
+                      {"path": "f/SPEC.md", "reason": "   \t"}):
+            with self.subTest(entry):
+                self.assertFails({"SPEC.md": GOOD_SPEC, "f/SPEC.md": "x\n",
+                                  ".docops-policy.json": policy_doc(non_active=[entry])},
+                                 "NON_ACTIVE_REASON_MISSING")
+
+    def test_a_stale_non_active_entry_fails(self):
+        self.assertFails({"SPEC.md": GOOD_SPEC,
+                          ".docops-policy.json": policy_doc(non_active=[listed("gone/SPEC.md")])},
+                         "NON_ACTIVE_STALE")
+
+    def test_the_root_listed_as_non_active_fails(self):
+        self.assertFails({"SPEC.md": GOOD_SPEC,
+                          ".docops-policy.json": policy_doc(non_active=[listed("SPEC.md")])},
+                         "ROOT_LISTED_NON_ACTIVE")
+        self.assertFails({"SPEC.md": GOOD_SPEC, ".docops-policy.json": policy_doc(
+            [("SPEC.md", "root")], [listed("SPEC.md")])}, "ROOT_LISTED_NON_ACTIVE")
+
+    def test_directory_prefix_entries_are_not_supported_and_hide_nothing(self):
+        result = self.assertFails({"SPEC.md": GOOD_SPEC, "tests/fixtures/SPEC.md": "x\n",
+                                   ".docops-policy.json": policy_doc(
+                                       non_active=[listed("tests/fixtures")])},
+                                  "NON_ACTIVE_NOT_A_FILE")
+        self.assertIn("OUT_OF_SCOPE_SPEC", finding_codes(result))
+
+    def test_a_broken_listing_leaves_the_file_unclassified_never_a_pass(self):
+        cases = {
+            "no reason": ([{"path": "f/SPEC.md"}], "NON_ACTIVE_REASON_MISSING"),
+            "duplicate": ([listed("f/SPEC.md"), listed("f/SPEC.md")], "NON_ACTIVE_DUPLICATE"),
+        }
+        for name, (entries, code) in cases.items():
+            with self.subTest(name):
+                self.assertFails({"SPEC.md": GOOD_SPEC, "f/SPEC.md": "x\n",
+                                  ".docops-policy.json": policy_doc(non_active=entries)}, code)
+
+    def test_a_nested_symlink_named_spec_md_is_unclassified_never_followed(self):
+        with GitFixture() as fx:
+            fx.write("real.md", GOOD_SPEC)
+            os.makedirs(os.path.join(fx.root, "nested"))
+            os.symlink("../real.md", os.path.join(fx.root, "nested", "SPEC.md"))
+            fx.stage("SPEC.md", GOOD_SPEC)
+            fx.git("add", "-A")
+            fx.git("commit", "-q", "-m", "symlink")
+            result = check(fx, "HEAD")
+            self.assertEqual(spec_status(result), "FAIL")
+            self.assertIn("OUT_OF_SCOPE_SPEC", finding_codes(result))
+
+    def test_a_track_named_root_elsewhere_does_not_share_the_name_with_the_implicit_root(self):
+        files = {".docops-policy.json": policy_json(("v/SPEC.md", "root")),
+                 "SPEC.md": GOOD_SPEC, "v/SPEC.md": GOOD_SPEC}
+        self.assertFails(files, "SPEC_CLASSIFICATION_CONFLICT")
+        with GitFixture() as fx:  # no root SPEC.md: only one track carries the name, no conflict
+            fx.commit_files({".docops-policy.json": policy_json(("v/SPEC.md", "root")),
+                             "v/SPEC.md": GOOD_SPEC})
+            self.assertEqual(spec_status(check(fx, "HEAD")), "PASS")
+
+    def test_a_malformed_policy_shape_is_a_tool_error_not_a_verdict(self):
+        bad = ({}, {"path": "x"}, "text", [1], [{"path": "f/SPEC.md", "reason": "r", "extra": 1}],
+               [{"reason": "r"}], [{"path": "../SPEC.md", "reason": "r"}],
+               [{"path": "f/SPEC.md", "reason": 5}])
+        for value in bad:
+            with self.subTest(value):
+                with GitFixture() as fx:
+                    fx.commit_files({"SPEC.md": GOOD_SPEC,
+                                     ".docops-policy.json": policy_doc(non_active=value)})
+                    self.assertToolError(check(fx, "HEAD"), "POLICY_INVALID")
+
+    def test_a_policy_without_the_new_field_stays_valid_and_behaves_as_before(self):
+        with GitFixture() as fx:  # a Brain-shaped policy: root and one more track, both registered
+            fx.commit_files({".docops-policy.json": policy_json(("SPEC.md", "root"),
+                                                                ("verification/SPEC.md", "verification")),
+                             "SPEC.md": GOOD_SPEC, "verification/SPEC.md": SPEC_V2})
+            result = check(fx, "HEAD")
+            self.assertEqual(spec_status(result), "PASS")
+            self.assertEqual([t["track"] for t in result["checks"]["SPEC_STRUCTURE"]["tracks"]],
+                             ["root", "verification"])
+            self.assertEqual(finding_codes(result), [])
+            self.assertEqual(result["checks"]["SPEC_STRUCTURE"]["non_active_specs"], [])
+
+    def test_results_with_classification_fields_conform_to_the_schema(self):
+        with GitFixture() as fx:
+            fx.commit_files({"SPEC.md": GOOD_SPEC, "f/SPEC.md": "x\n", "g/SPEC.md": "x\n",
+                             ".docops-policy.json": policy_doc(non_active=[listed("f/SPEC.md")])})
+            result = check(fx, "HEAD")
+            document = {"schema_version": 1, "tool": {"name": "docops", "version": "0.3.0"},
+                        "command": "check", "repository": {"root": fx.root}, "snapshots": [result],
+                        "summary": {"status": result["status"], "exit_code": result["exit_code"],
+                                    "tool_errors": 0}}
+            self.assertEqual(validate(document, load_result_schema()), [])
+
+
+class ClassificationParityTests(DocopsTestCase):
+    """The impact validator's SPEC candidates and the checker classify the same cases the same way."""
+
+    CASES = {
+        "root only": {"SPEC.md": GOOD_SPEC},
+        "root and unlisted nested": {"SPEC.md": GOOD_SPEC, "a/SPEC.md": GOOD_SPEC},
+        "nested only, unlisted": {"a/b/spec.md": GOOD_SPEC},
+        "registered track": {".docops-policy.json": policy_json(("v/SPEC.md", "v")),
+                             "v/SPEC.md": GOOD_SPEC},
+        "policy omits root": {".docops-policy.json": policy_json(("v/SPEC.md", "v")),
+                              "SPEC.md": GOOD_SPEC, "v/SPEC.md": GOOD_SPEC},
+        "explicit root": {".docops-policy.json": policy_json(("SPEC.md", "root")),
+                          "SPEC.md": GOOD_SPEC},
+        "listed non-active": {".docops-policy.json": policy_doc(non_active=[listed("f/SPEC.md")]),
+                              "f/SPEC.md": "x\n"},
+        "listed without reason": {".docops-policy.json": policy_doc(non_active=[{"path": "f/SPEC.md"}]),
+                                  "f/SPEC.md": "x\n"},
+        "active and non-active": {".docops-policy.json": policy_doc([("v/SPEC.md", "v")],
+                                                                    [listed("v/SPEC.md")]),
+                                  "v/SPEC.md": GOOD_SPEC},
+        "root listed non-active": {".docops-policy.json": policy_doc(non_active=[listed("SPEC.md")]),
+                                   "SPEC.md": GOOD_SPEC},
+        "stale entry beside an unlisted file": {
+            ".docops-policy.json": policy_doc(non_active=[listed("gone/SPEC.md")]),
+            "u/SPEC.md": "x\n"},
+        "other names": {"SPEC.txt": "x\n", "docs/SPECIFICATION.md": "x\n"},
+    }
+
+    def test_candidates_equal_what_the_checker_accepted_or_flagged(self):
+        for name, files in self.CASES.items():
+            with self.subTest(name):
+                with GitFixture() as fx:
+                    fx.commit_files(files)
+                    repo = gitstate.open_repository(fx.root)
+                    snapshot = gitstate.commit_snapshot(repo, "HEAD")
+                    candidates = checks.spec_candidate_paths(snapshot)
+                    structure = check(fx, "HEAD")["checks"]["SPEC_STRUCTURE"]
+                    self.assertEqual(len(candidates), len(set(candidates)), "a path listed twice")
+                    self.assertEqual(candidates[0], "SPEC.md")  # the root, always, once
+                    named = {p for p in files if p.lower().endswith("spec.md")
+                             and p.rsplit("/", 1)[-1].lower() == "spec.md"}
+                    accepted = {t["path"] for t in structure["tracks"]}
+                    accepted |= {n["path"] for n in structure["non_active_specs"]}
+                    # candidates = the root + every checker track + every SPEC-named file that the
+                    # checker did not accept as a track or a validly listed non-active file
+                    expected = {"SPEC.md"} | {t["path"] for t in structure["tracks"]} | (named - accepted)
+                    self.assertEqual(set(candidates), expected)
+                    # and a SPEC-named file the checker flags is never absent from the candidates
+                    for diagnostic in structure["diagnostics"]:
+                        if diagnostic["code"] == "OUT_OF_SCOPE_SPEC":
+                            self.assertTrue(any(p in diagnostic["message"] for p in candidates))
 
 
 class CheckerFailureTests(DocopsTestCase):

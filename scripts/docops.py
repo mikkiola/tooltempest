@@ -12,7 +12,9 @@ dependency, I/O, Git, policy, internal error: never a per-check status; a
 usage error and a failure to render the output are printed on stderr
 only, a failure to write it leaves no result at all, any other failure
 also appears in the JSON result as an `error` object or `summary.reason`); 3 when SPEC applicability cannot be
-established (1 takes precedence when both apply). See docs/adr/0013,
+established (no SPEC scope rule produces it since ADR-0013 Decision 7 was
+amended: every file named SPEC.md is classified or fails; 1 takes precedence
+when both apply). See docs/adr/0013,
 docs/adr/0014 and schemas/docops-result.schema.json.
 
 The checker writes nothing: no files (bytecode caching is disabled

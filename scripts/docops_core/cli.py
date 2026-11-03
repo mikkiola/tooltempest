@@ -14,8 +14,9 @@ JSON on stdout; `report` prints the same result as text. Exit codes
      the output are printed on stderr only, a failure to write it leaves no
      result at all; any other failure also appears in the JSON result, as the
      `error` object of the snapshot it concerns or as `summary.reason`.
-  3  SPEC applicability cannot be established (SKIP of SPEC_STRUCTURE); 1
-     takes precedence when both apply
+  3  SPEC applicability cannot be established (SKIP of SPEC_STRUCTURE; no SPEC
+     scope rule produces it since ADR-0013 Decision 7 was amended: every
+     SPEC.md is classified or fails); 1 takes precedence when both apply
 
 `--impact-file PATH|-` additionally validates an externally written impact
 report against each inspected snapshot (DOC_IMPACT_ASSESSMENT). A report that
@@ -40,7 +41,8 @@ EXIT_CODES_HELP = """exit codes:
   1  an invariant is violated (FAIL), or a supplied impact report's required
      assessment is not complete
   2  no verdict: usage, dependency, I/O, Git, policy or internal error
-  3  SPEC applicability cannot be established (1 takes precedence when both apply)
+  3  SPEC applicability cannot be established (no SPEC rule produces it today;
+     1 takes precedence when both apply)
 """
 
 _PUSH_USAGE = "expected '<local ref> <local oid> <remote ref> <remote oid>' (git pre-push stdin)"
@@ -178,6 +180,18 @@ def _safe(value: object) -> str:
     return "".join(out)
 
 
+_LINE_BREAKS = "\n\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029"
+
+
+def _inline(value) -> str:
+    """Escape every character that would start a new line of the text report, so snapshot-
+    derived text (a path, a policy reason, a message) stays on the line it belongs to and
+    cannot forge another line such as the summary. The other control, format and surrogate
+    characters are escaped later, line by line, by _safe."""
+    return "".join("\\x%02x" % ord(c) if c in _LINE_BREAKS and ord(c) < 256
+                   else "\\u%04x" % ord(c) if c in _LINE_BREAKS else c for c in str(value))
+
+
 def render_text(result: dict) -> str:
     return "".join(_safe_line(line) for line in _render_lines(result).splitlines(True))
 
@@ -233,14 +247,17 @@ def _render_lines(result: dict) -> str:
             if name == "SPEC_STRUCTURE":
                 for track in check["tracks"]:
                     out.append("    track %s (%s): %s, state %s - %s"
-                               % (track["track"], track["path"], track["status"],
-                                  track["state"], track["reason"]))
+                               % (_inline(track["track"]), _inline(track["path"]), track["status"],
+                                  track["state"], _inline(track["reason"])))
                     for diag in track["diagnostics"]:
                         where = ":%d" % diag["line"] if diag["line"] else ""
-                        out.append("      %s%s %s: %s" % (track["path"], where,
-                                                          diag["code"], diag["message"]))
+                        out.append("      %s%s %s: %s" % (_inline(track["path"]), where,
+                                                          diag["code"], _inline(diag["message"])))
+                for item in check["non_active_specs"]:
+                    out.append("    non-active %s: %s" % (_inline(item["path"]),
+                                                          _inline(item["reason"])))
                 for diag in check["diagnostics"]:
-                    out.append("    warning %s: %s" % (diag["code"], diag["message"]))
+                    out.append("    FAIL %s: %s" % (diag["code"], _inline(diag["message"])))
     out.append("")
     summary = result["summary"]
     line = "summary: %s (exit %d)" % (

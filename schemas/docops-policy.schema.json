@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mikkiola/tooltempest/schemas/docops-policy.schema.json",
   "title": "DocOps SPEC registry",
-  "description": "Optional .docops-policy.json at a repository root, read from the inspected snapshot. Registers which SPEC files are tracks. Whether a SPEC is active or idle is declared inside the SPEC itself, as `spec-state: idle` in its frontmatter (ADR-0013 Decision 1), not here. Without this file, a root-level SPEC.md is the single implicit track 'root'. See ADR-0013.",
+  "description": "Optional .docops-policy.json at a repository root, read from the inspected snapshot. The root-level SPEC.md is always the root SPEC and is evaluated exactly once, with or without this file; this file adds to it. `specs` registers further active tracks; `non_active_specs` lists, by exact path and with a reason, SPEC files that are not project specifications (test fixtures, historical material). Every tracked file named SPEC.md (case-insensitive, any depth) must be in exactly one category: the root SPEC, a registered active track, or a listed non-active file; any other is a FAIL that names the path. Whether a SPEC is active or idle is declared inside the SPEC itself, as `spec-state: idle` in its frontmatter (ADR-0013 Decision 1), not here. See ADR-0013 Decision 7.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "specs"],
@@ -10,7 +10,7 @@
     "schema_version": {"const": 1},
     "specs": {
       "type": "array",
-      "description": "Registered SPEC tracks. A registered path that is absent from the snapshot is a FAIL. An empty list registers no tracks; any SPEC.md then present is reported out of scope.",
+      "description": "Registered active SPEC tracks, added to the root SPEC. An entry whose path is the root SPEC.md is the root SPEC under the track name it gives (not a second track, never evaluated twice). A registered path that is absent from the snapshot is a FAIL. An empty list registers no further tracks; the root SPEC.md is still evaluated.",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -18,6 +18,19 @@
         "properties": {
           "path": {"type": "string", "minLength": 1, "description": "Relative POSIX path from the repository root; no '..', '.', empty or '.git' components, no backslashes. Must be unique."},
           "track": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$", "description": "Track name, unique within the policy."}
+        }
+      }
+    },
+    "non_active_specs": {
+      "type": "array",
+      "description": "Optional (a policy without it is valid). Explicitly listed non-active SPEC files, not evaluated and reported in the result. Exact file paths only, never directory prefixes. Each of these is a FAIL, not a malformed policy: a duplicate path, a path that is also in `specs`, the root SPEC.md, an entry without a non-empty reason, and an entry whose file does not exist in the snapshot. A policy that lists only non-active files and registers nothing else leaves the result what it would be without a policy.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path"],
+        "properties": {
+          "path": {"type": "string", "minLength": 1, "description": "Relative POSIX path from the repository root of a file that exists in the snapshot; same path rules as `specs`."},
+          "reason": {"type": "string", "description": "Why the file is not a project specification. Required in substance: the loader accepts an entry without it or with a blank one, and the checker then reports a FAIL (NON_ACTIVE_REASON_MISSING), so a missing reason is never a pass."}
         }
       }
     }

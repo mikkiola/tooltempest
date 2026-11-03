@@ -83,6 +83,38 @@ class PolicyParseTests(DocopsTestCase):
         self.assertIn("spec-state: idle", policy_text)
         self.assertIn("frontmatter", policy_text)
 
+    def test_non_active_specs_are_optional_and_parsed(self):
+        self.assertEqual(parse_policy(doc()).non_active, ())
+        self.assertEqual(parse_policy(doc(non_active_specs=[])).non_active, ())
+        parsed = parse_policy(doc(non_active_specs=[
+            {"path": "tests/fixtures/SPEC.md", "reason": "Fixture."},
+            {"path": "docs/old/SPEC.md"}]))
+        self.assertEqual([(n.path, n.reason) for n in parsed.non_active],
+                         [("tests/fixtures/SPEC.md", "Fixture."), ("docs/old/SPEC.md", None)])
+        self.assertEqual(policy.default_policy().non_active, ())
+
+    def test_content_problems_of_non_active_entries_are_left_to_the_checker(self):
+        # a duplicate path, a path that is also a track, a blank reason: parsed, not rejected;
+        # the checker reports each as a FAIL (see ClassificationTests)
+        parsed = parse_policy(doc(non_active_specs=[
+            {"path": "a/SPEC.md", "reason": ""}, {"path": "a/SPEC.md", "reason": "x"},
+            {"path": "SPEC.md", "reason": "x"}]))
+        self.assertEqual(len(parsed.non_active), 3)
+
+    def test_malformed_non_active_specs_are_rejected(self):
+        bad = {
+            "not a list": {"path": "a/SPEC.md"},
+            "entry not an object": ["a/SPEC.md"],
+            "unknown key": [{"path": "a/SPEC.md", "reason": "x", "track": "t"}],
+            "missing path": [{"reason": "x"}],
+            "reason not a string": [{"path": "a/SPEC.md", "reason": 3}],
+            "unsafe path": [{"path": "../SPEC.md", "reason": "x"}],
+            "empty path": [{"path": "", "reason": "x"}],
+        }
+        for label, value in bad.items():
+            with self.assertRaises(PolicyError, msg=label):
+                parse_policy(doc(non_active_specs=value))
+
     def test_bom_is_tolerated(self):
         self.assertEqual(len(parse_policy(b"\xef\xbb\xbf" + doc()).tracks), 1)
 

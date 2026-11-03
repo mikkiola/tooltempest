@@ -301,7 +301,7 @@ class NoMutationMatrix(DocopsTestCase):
             ("commit id", ["--tree", c["good"]], 0),
             ("several trees", ["--tree", "HEAD", "--tree", "feature", "--tree", "index"], 1),
             ("idle SPEC", ["--tree", c["idle"]], 0),
-            ("applicability not established", ["--tree", c["nested"]], 3),
+            ("nested SPEC.md that no category accepts", ["--tree", c["nested"]], 1),
             ("UTF-8 BOM with CRLF line endings", ["--tree", c["bom-crlf"]], 0),
         ]
         for name, args, expected in cases:

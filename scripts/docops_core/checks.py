@@ -3,13 +3,16 @@
 Per-check status vocabulary (exactly four values, as in the approved
 contract; see schemas/docops-result.schema.json):
 
-  PASS   every registered SPEC that is active meets the structural contract
+  PASS   the root SPEC and every registered SPEC that is active meet the
+         structural contract
   FAIL   a SPEC (or a registered-but-missing/unmerged/non-regular/directory
-         SPEC) violates it
+         SPEC) violates it, or a file named SPEC.md is not classified, or a
+         classification is invalid, conflicting or stale (ADR-0013 Decision 7)
   N/A    nothing to check, proven: no SPEC exists in scope, or every SPEC
-         in scope declares itself idle and no SPEC lies outside the scope
-  SKIP   applicability cannot be established (SPEC files exist outside the
-         registered scope that were not evaluated)
+         in scope declares itself idle (every SPEC.md is classified, so no
+         SPEC lies outside the scope)
+  SKIP   defined for the contract and exit code 3; the SPEC scope rules no
+         longer produce it
 
 A failure of the checker itself (Git cannot read the requested snapshot,
 the policy file is invalid, a blob is unreadable, an internal error) is
@@ -27,7 +30,8 @@ verdict.
 from __future__ import annotations
 
 import posixpath
-from typing import Dict, List, Optional
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
 
 from . import RESULT_SCHEMA_VERSION, TOOL_NAME, TOOL_VERSION
 from . import gitstate, impact as impact_mod, policy as policy_mod, specparse
@@ -132,7 +136,7 @@ def _load_policy(snapshot: Snapshot, by_path: Dict[str, List[Entry]]) -> policy_
 
 
 def _check_track(snapshot: Snapshot, by_path: Dict[str, List[Entry]],
-                 spec: policy_mod.TrackSpec, implicit: bool) -> Optional[dict]:
+                 spec: policy_mod.TrackSpec, optional: bool) -> Optional[dict]:
     found = by_path.get(spec.path)
     if not found and _is_directory(by_path, spec.path):
         return _track_result(
@@ -142,8 +146,8 @@ def _check_track(snapshot: Snapshot, by_path: Dict[str, List[Entry]],
                    % spec.path)],
         )
     if not found:
-        if implicit:
-            return None  # no root SPEC and no registry: the normal "no SPEC" state
+        if optional:
+            return None  # the root SPEC.md is absent and no policy entry names it: no SPEC
         return _track_result(
             spec.path, spec.track, FAIL, specparse.STATE_UNKNOWN,
             "registered SPEC is not present in the inspected snapshot",
@@ -176,21 +180,148 @@ def _check_track(snapshot: Snapshot, by_path: Dict[str, List[Entry]],
     )
 
 
-def registered_spec_paths(snapshot: Snapshot) -> List[str]:
-    """Registered SPEC track paths of a snapshot, present or not (the SPEC check's own
-    rule: the policy file, else the root SPEC.md). An unusable policy is never read as an
-    empty one: it raises SpecPolicyUnreadable and the caller must not guess."""
+_CODE_UNCLASSIFIED = "OUT_OF_SCOPE_SPEC"  # code kept from the earlier, warning-only rule
+
+
+@dataclass(frozen=True)
+class Classification:
+    """Where every file named SPEC.md of a snapshot stands (ADR-0013 Decision 7)."""
+    policy: policy_mod.Policy
+    root: policy_mod.TrackSpec        # the root SPEC; evaluated if present or explicitly named
+    root_explicit: bool               # the policy has an entry for the root path
+    tracks: Tuple[policy_mod.TrackSpec, ...]    # registered active tracks, root excluded
+    non_active: Tuple[Tuple[str, str], ...]     # valid listed non-active files: (path, reason)
+    unclassified: Tuple[str, ...]     # SPEC.md files in no valid category (listed-but-invalid included)
+    findings: Tuple[dict, ...]        # check-level findings; each one makes the check FAIL
+
+
+def _is_spec_name(path: str) -> bool:
+    return posixpath.basename(path).lower() == "spec.md"
+
+
+def classify_specs(policy: policy_mod.Policy, by_path: Dict[str, List[Entry]]) -> Classification:
+    root = None
+    tracks = []
+    for track in policy.tracks:
+        if track.path == policy_mod.ROOT_SPEC_PATH:
+            root = track
+        else:
+            tracks.append(track)
+    # The default policy (no policy file) carries the root track so that it is always there,
+    # but nothing names it: an absent root is then simply no SPEC, not a missing registration.
+    root_explicit = root is not None and not policy.implicit
+    if root is None:
+        root = policy_mod.TrackSpec(policy_mod.ROOT_SPEC_PATH, policy_mod.DEFAULT_TRACK)
+    active_paths = {t.path for t in tracks}
+
+    findings: List[dict] = []
+    if not root_explicit:
+        # The implicit root is named "root"; a track registered under that name elsewhere would
+        # make two tracks of one name, which a reader keying tracks by name would conflate.
+        for track in tracks:
+            if track.track == root.track and policy_mod.ROOT_SPEC_PATH in by_path:
+                findings.append(_diag(
+                    "SPEC_CLASSIFICATION_CONFLICT",
+                    "track name %r is used by the root SPEC.md and by %s; the name 'root' "
+                    "belongs to the root SPEC unless an explicit root entry names it otherwise"
+                    % (track.track, track.path)))
+    valid: List[Tuple[str, str]] = []
+    seen = set()
+    duplicated = set()
+    listed = set()
+    for entry in policy.non_active:
+        listed.add(entry.path)
+        if entry.path in seen:
+            if entry.path not in duplicated:
+                duplicated.add(entry.path)
+                findings.append(_diag(
+                    "NON_ACTIVE_DUPLICATE",
+                    "non_active_specs lists %s more than once; list each file once" % entry.path))
+            continue
+        seen.add(entry.path)
+        problems = 0
+        if entry.path == policy_mod.ROOT_SPEC_PATH:
+            findings.append(_diag(
+                "ROOT_LISTED_NON_ACTIVE",
+                "the root %s cannot be listed in non_active_specs: the root SPEC is always "
+                "active" % entry.path))
+            problems += 1
+        if entry.path in active_paths:
+            findings.append(_diag(
+                "SPEC_CLASSIFICATION_CONFLICT",
+                "%s is both a registered active track and a non-active file; it must be in "
+                "exactly one category" % entry.path))
+            problems += 1
+        if entry.reason is None or not entry.reason.strip():
+            findings.append(_diag(
+                "NON_ACTIVE_REASON_MISSING",
+                "non_active_specs entry %s has no reason; state why it is not a project "
+                "specification" % entry.path))
+            problems += 1
+        found = by_path.get(entry.path)
+        if not found:
+            if _is_directory(by_path, entry.path):
+                findings.append(_diag(
+                    "NON_ACTIVE_NOT_A_FILE",
+                    "non_active_specs entry %s is a directory in the snapshot, not a file"
+                    % entry.path))
+            else:
+                findings.append(_diag(
+                    "NON_ACTIVE_STALE",
+                    "non_active_specs lists %s, which does not exist in the snapshot; remove "
+                    "the entry" % entry.path))
+            problems += 1
+        elif len(found) != 1 or found[0].stage != 0:
+            findings.append(_diag(
+                "NON_ACTIVE_NOT_A_FILE",
+                "non_active_specs entry %s is unmerged in the index (conflict stages present)"
+                % entry.path))
+            problems += 1
+        if not problems:
+            valid.append((entry.path, entry.reason.strip()))
+
+    handled = {root.path} | active_paths | {path for path, _ in valid}
+    unclassified = tuple(sorted(
+        path for path in by_path if _is_spec_name(path) and path not in handled))
+    # A listed file whose entry is invalid stays unclassified (it is not in `handled`), but
+    # its entry already carries the finding, so only unlisted files get the inventory finding.
+    for path in unclassified:
+        if path in listed:
+            continue
+        findings.append(_diag(
+            _CODE_UNCLASSIFIED,
+            "SPEC file %s is not classified: it is not the root SPEC.md, not a registered active "
+            "track and not listed in non_active_specs; register it in specs, list it in "
+            "non_active_specs with a reason, or remove it (rule: every file named SPEC.md is "
+            "exactly one of these, ADR-0013 Decision 7)" % path))
+    return Classification(policy, root, root_explicit, tuple(tracks), tuple(valid),
+                          unclassified, tuple(findings))
+
+
+def spec_candidate_paths(snapshot: Snapshot) -> List[str]:
+    """SPEC paths of a snapshot for the impact validator (ADR-0014 Decision 2), taken by the
+    same classification as the SPEC check: the root SPEC.md (always, once), the registered
+    active tracks, and every SPEC.md that is not validly classified. A validly listed
+    non-active file is not a candidate. An unusable policy is never read as an empty one: it
+    raises SpecPolicyUnreadable and the caller must not guess."""
+    by_path = _entries_by_path(snapshot.entries)
     try:
-        policy = _load_policy(snapshot, _entries_by_path(snapshot.entries))
+        policy = _load_policy(snapshot, by_path)
     except policy_mod.PolicyError as exc:
         raise impact_mod.SpecPolicyUnreadable("the SPEC policy %s cannot be used: %s"
                                               % (policy_mod.POLICY_PATH, exc))
-    return [track.path for track in policy.tracks]
+    cls = classify_specs(policy, by_path)
+    paths = [cls.root.path] + [t.path for t in cls.tracks]
+    # Every SPEC-named file that is not the root, a track or a validly listed non-active file.
+    accepted = set(paths) | {path for path, _ in cls.non_active}
+    paths += sorted(p for p in by_path if _is_spec_name(p) and p not in accepted)
+    return paths
 
 
 def check_spec_structure(snapshot: Snapshot) -> dict:
-    """Evaluate every registered SPEC in the snapshot. SPEC content problems
-    become FAIL; checker/Git/policy problems raise ToolFailure."""
+    """Evaluate the root SPEC and every registered SPEC in the snapshot, and classify every
+    file named SPEC.md. SPEC content problems become FAIL; checker/Git/policy problems raise
+    ToolFailure."""
     by_path = _entries_by_path(snapshot.entries)
     try:
         policy = _load_policy(snapshot, by_path)
@@ -200,49 +331,34 @@ def check_spec_structure(snapshot: Snapshot) -> dict:
     except GitError as exc:
         raise ToolFailure("POLICY_UNREADABLE", "policy could not be read: %s" % exc)
 
-    registered = {t.path for t in policy.tracks}
+    cls = classify_specs(policy, by_path)
     tracks = []
-    for spec in policy.tracks:
-        result = _check_track(snapshot, by_path, spec, policy.implicit)
+    # The root SPEC is evaluated exactly once, first. It may be absent unless the policy
+    # names it, in which case its absence is a FAIL like any registered path.
+    for spec, optional in [(cls.root, not cls.root_explicit)] + [(t, False) for t in cls.tracks]:
+        result = _check_track(snapshot, by_path, spec, optional)
         if result is not None:
             tracks.append(result)
 
-    out_of_scope = sorted(
-        path for path in by_path
-        if posixpath.basename(path).lower() == "spec.md" and path not in registered
-    )
-    warnings = [
-        _diag(
-            "OUT_OF_SCOPE_SPEC",
-            "SPEC file %s is outside the registered scope and was not evaluated; register "
-            "it in %s to check it" % (path, policy_mod.POLICY_PATH),
-        )
-        for path in out_of_scope
-    ]
+    findings = list(cls.findings)
 
-    if tracks:
+    if findings and FAIL in [t["status"] for t in tracks]:
+        status = FAIL
+        reason = ("one or more SPEC tracks did not pass and %d SPEC classification problem(s) "
+                  "were found (see tracks and diagnostics)" % len(findings))
+    elif findings:
+        status = FAIL
+        reason = ("%d SPEC classification problem(s): a file named SPEC.md is not classified, or "
+                  "a classification is invalid, conflicting or stale (see diagnostics)"
+                  % len(findings))
+    elif tracks:
         status = aggregate([t["status"] for t in tracks])
-        if status == NA and out_of_scope:
-            # "No active task" is proven only for the registered tracks; an
-            # unevaluated SPEC elsewhere may say otherwise, so N/A is not established.
-            status = SKIP
-            reason = (
-                "every SPEC in scope declares no active task, but %d SPEC file(s) outside the "
-                "registered scope were not evaluated; applicability cannot be established"
-                % len(out_of_scope)
-            )
-        elif status == NA:
+        if status == NA:
             reason = "every SPEC in scope explicitly declares no active task"
         elif status == PASS:
             reason = "every active SPEC in scope meets the structural contract"
         else:
             reason = "one or more SPEC tracks did not pass (see tracks)"
-    elif out_of_scope:
-        status = SKIP
-        reason = (
-            "no SPEC is registered in scope, but %d SPEC file(s) exist outside it; "
-            "applicability cannot be established" % len(out_of_scope)
-        )
     else:
         status = NA
         reason = (
@@ -257,7 +373,8 @@ def check_spec_structure(snapshot: Snapshot) -> dict:
         "policy": {"source": policy.source,
                    "path": policy_mod.POLICY_PATH if policy.source == "snapshot" else None},
         "tracks": tracks,
-        "diagnostics": warnings,
+        "non_active_specs": [{"path": path, "reason": why} for path, why in cls.non_active],
+        "diagnostics": findings,
     }
 
 
@@ -313,6 +430,7 @@ def deleted_snapshot_result(request: dict,
         "reason": "ref deletion: no tree is published, so there is no SPEC to check",
         "policy": {"source": "none", "path": None},
         "tracks": [],
+        "non_active_specs": [],
         "diagnostics": [],
     }
     info = {"kind": "deleted-ref", "commit": None, "tree": None, "index_digest": None}
@@ -351,7 +469,7 @@ def check_request(repo: gitstate.Repository, request: dict,
         impact = None
         if report is not None:
             impact = impact_mod.assess(report, snapshot, request.get("remote_oid"),
-                                       registered_spec_paths)
+                                       spec_candidate_paths)
     except ToolFailure as exc:
         return error_snapshot_result(request, exc.code, exc.message, info)
     except GitError as exc:

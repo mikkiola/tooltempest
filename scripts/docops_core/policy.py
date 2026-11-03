@@ -7,20 +7,25 @@ or idle is declared by the SPEC (see specparse), not here, so there is
 no second copy of that fact to go stale when a new SPEC overwrites an
 idle one.
 
-Without a policy file the registry is implicit: a root-level SPEC.md,
-if present, is the single track named "root". Every other SPEC.md in
-the snapshot is out of scope and is reported as such by the checker.
+The root-level SPEC.md is always the root SPEC, with or without a policy
+file (track "root" unless an explicit root entry names it otherwise). The
+policy adds to that: `specs` registers further active tracks, and the
+optional `non_active_specs` lists, by exact path and with a reason, SPEC
+files that are not project specifications (test fixtures, historical
+material). Every other file named SPEC.md is a FAIL of the checker
+(ADR-0013 Decision 7); the classification itself lives in checks.py.
 """
 from __future__ import annotations
 
 import json
 import re
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 POLICY_PATH = ".docops-policy.json"
 SUPPORTED_SCHEMA_VERSION = 1
 DEFAULT_SPEC_PATH = "SPEC.md"
+ROOT_SPEC_PATH = DEFAULT_SPEC_PATH
 DEFAULT_TRACK = "root"
 
 _TRACK_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
@@ -38,9 +43,16 @@ class TrackSpec:
 
 
 @dataclass(frozen=True)
+class NonActiveSpec:
+    path: str
+    reason: Optional[str]  # None when the entry has no `reason`; the checker reports that as a FAIL
+
+
+@dataclass(frozen=True)
 class Policy:
     source: str  # "default" | "snapshot"
     tracks: Tuple[TrackSpec, ...]
+    non_active: Tuple[NonActiveSpec, ...] = ()
 
     @property
     def implicit(self) -> bool:
@@ -87,7 +99,7 @@ def parse_policy(data: bytes) -> Policy:
 
     if not isinstance(document, dict):
         raise PolicyError("policy must be a JSON object")
-    unknown = sorted(set(document) - {"schema_version", "specs"})
+    unknown = sorted(set(document) - {"schema_version", "specs", "non_active_specs"})
     if unknown:
         raise PolicyError("unknown policy key(s): %s" % ", ".join(unknown))
     version = document.get("schema_version")
@@ -122,4 +134,25 @@ def parse_policy(data: bytes) -> Policy:
         seen_paths.add(path)
         seen_names.add(track)
         tracks.append(TrackSpec(path, track))
-    return Policy("snapshot", tuple(tracks))
+
+    non_active: List[NonActiveSpec] = []
+    raw_non_active = document.get("non_active_specs", [])
+    if not isinstance(raw_non_active, list):
+        raise PolicyError("'non_active_specs' must be a list")
+    for index, entry in enumerate(raw_non_active):
+        if not isinstance(entry, dict):
+            raise PolicyError("non_active_specs[%d] must be an object" % index)
+        extra = sorted(set(entry) - {"path", "reason"})
+        if extra:
+            raise PolicyError(
+                "non_active_specs[%d] has unknown key(s): %s" % (index, ", ".join(extra))
+            )
+        path = validate_spec_path(entry.get("path"))
+        reason = entry.get("reason")
+        if reason is not None and not isinstance(reason, str):
+            raise PolicyError("non_active_specs[%d].reason must be a string" % index)
+        # A missing, empty or blank reason, a duplicate entry and a path that is also an
+        # active track are classification problems, reported by the checker as FAIL; they
+        # are not a malformed policy.
+        non_active.append(NonActiveSpec(path, reason))
+    return Policy("snapshot", tuple(tracks), tuple(non_active))

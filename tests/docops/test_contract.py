@@ -17,16 +17,37 @@ details, impact validation rules, parser rules) are not repeated.
 import json
 import os
 import re
+import subprocess
+import sys
 import tempfile
 import unittest
 
-from helpers import (DOCOPS_PY, GOOD_SPEC, IDLE_SPEC, RESULT_SCHEMA, DocopsTestCase, GitFixture, clean_env,
-                     load_result_schema, run_cli)
+from helpers import (DOCOPS_PY, GOOD_SPEC, IDLE_SPEC, RESULT_SCHEMA, SCRIPTS_DIR, DocopsTestCase,
+                     GitFixture, clean_env, load_result_schema, run_cli)
 
 import docops_core.cli as cli_module
 
 BAD_SPEC = "# Broken\n\n## Goals\n\n- [ ] only a goal\n"
 ZERO = "0" * 40
+# Exit 3 stays part of the contract, but since ADR-0013 Decision 7 was amended no SPEC scope rule
+# produces a SKIP of SPEC_STRUCTURE, so no repository state reaches it. The exit-3 rows run the real
+# CLI with the SPEC check's status replaced by SKIP (everything else is the real code path): this
+# proves the exit code, the aggregation, the schema conformance and the rendering for SKIP, and
+# nothing about when a SKIP would arise.
+SKIP_WRAPPER = """
+import os, sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, %r)
+from docops_core import checks, cli
+_real = checks.check_spec_structure
+def _skip(snapshot):
+    result = _real(snapshot)
+    if snapshot.identity.get("commit") == os.environ["DOCOPS_TEST_SKIP_COMMIT"]:
+        result.update(status="SKIP", reason="synthetic SKIP for the exit-3 contract test")
+    return result
+checks.check_spec_structure = _skip
+sys.exit(cli.main(sys.argv[1:]))
+""" % str(SCRIPTS_DIR)
 SUMMARY_LINE = re.compile(r"^summary: (?P<status>.+?) \(exit (?P<code>\d)\)", re.MULTILINE)
 
 
@@ -43,9 +64,8 @@ class OutcomeTable(DocopsTestCase):
             "PASS": fx.commit_files({"SPEC.md": GOOD_SPEC}, "good"),
             "FAIL": fx.commit_files({"SPEC.md": BAD_SPEC}, "bad"),
         }
-        fx.git("rm", "-q", "SPEC.md")
-        fx.stage("deep/er/SPEC.md", GOOD_SPEC)
-        cls.commits["SKIP"] = fx.commit("nested only")
+        # a valid SPEC in its own commit; SKIP_WRAPPER turns the verdict of this commit only into SKIP
+        cls.commits["SKIP"] = fx.commit_files({"SPEC.md": GOOD_SPEC, "NOTE.md": "skip target\n"}, "skip target")
         cls.tmp = tempfile.mkdtemp(prefix="docops-contract-")
         cls.reports = {}
         for name, text in (("malformed", "{not json"), ("empty-object", "{}")):
@@ -62,14 +82,21 @@ class OutcomeTable(DocopsTestCase):
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
     # -- running both commands on the same arguments -------------------------------------
-    def both(self, args, stdin=b""):
+    def run_synthetic_skip(self, args, stdin=b""):
+        env = clean_env({"DOCOPS_TEST_SKIP_COMMIT": self.commits["SKIP"]})
+        proc = subprocess.run([sys.executable, "-I", "-c", SKIP_WRAPPER, *args], input=stdin,
+                              capture_output=True, env=env, check=False)
+        return proc.returncode, proc.stdout.decode("utf-8", "replace"), proc.stderr.decode("utf-8", "replace")
+
+    def both(self, args, stdin=b"", skip=False):
         root = self.fx.root
-        code_check, out_check, err_check = run_cli(["check", "--repo", root, *args], stdin=stdin)
-        code_report, out_report, err_report = run_cli(["report", "--repo", root, *args], stdin=stdin)
+        run = self.run_synthetic_skip if skip else run_cli
+        code_check, out_check, err_check = run(["check", "--repo", root, *args], stdin=stdin)
+        code_report, out_report, err_report = run(["report", "--repo", root, *args], stdin=stdin)
         return (code_check, out_check, err_check), (code_report, out_report, err_report)
 
-    def assertContract(self, args, expected_exit, expected_status, stdin=b""):
-        (code, out, err), (rcode, rout, rerr) = self.both(args, stdin)
+    def assertContract(self, args, expected_exit, expected_status, stdin=b"", skip=False):
+        (code, out, err), (rcode, rout, rerr) = self.both(args, stdin, skip)
         # check: one JSON document, schema-valid, exit code = summary.exit_code
         result = json.loads(out)
         self.assertValidResult(result)
@@ -106,8 +133,15 @@ class OutcomeTable(DocopsTestCase):
         self.assertContract(["--tree", self.commits["FAIL"]], 1, "FAIL")
 
     def test_applicability_not_established_exits_three(self):
-        result = self.assertContract(["--tree", self.commits["SKIP"]], 3, "SKIP")
+        result = self.assertContract(["--tree", self.commits["SKIP"]], 3, "SKIP", skip=True)
         self.assertEqual(result["snapshots"][0]["checks"]["SPEC_STRUCTURE"]["status"], "SKIP")
+
+    def test_no_repository_state_reaches_exit_three_through_the_real_code_path(self):
+        # an unclassified SPEC.md fails (exit 1); it is never SKIP, never exit 3
+        with GitFixture() as fx:
+            fx.commit_files({"SPEC.md": IDLE_SPEC, "deep/er/SPEC.md": GOOD_SPEC})
+            code, out, _ = run_cli(["check", "--repo", fx.root, "--tree", "HEAD"])
+            self.assertEqual((code, json.loads(out)["summary"]["status"]), (1, "FAIL"))
 
     def test_a_snapshot_that_cannot_be_read_is_a_tool_error_exit_two_with_an_error_object(self):
         result = self.assertContract(["--tree", "no-such-ref"], 2, None)
@@ -130,8 +164,8 @@ class OutcomeTable(DocopsTestCase):
     def test_the_summary_exit_code_is_the_worst_of_the_snapshots(self):
         pass_, fail, skip = (self.commits[k] for k in ("PASS", "FAIL", "SKIP"))
         self.assertContract(["--tree", pass_, "--tree", fail], 1, "FAIL")
-        self.assertContract(["--tree", pass_, "--tree", skip], 3, "SKIP")
-        self.assertContract(["--tree", skip, "--tree", fail], 1, "FAIL")  # 1 over 3
+        self.assertContract(["--tree", pass_, "--tree", skip], 3, "SKIP", skip=True)
+        self.assertContract(["--tree", skip, "--tree", fail], 1, "FAIL", skip=True)  # 1 over 3
         (code, out, _), _ = self.both(["--tree", fail, "--tree", "no-such-ref"])
         self.assertEqual((code, json.loads(out)["summary"]["exit_code"]), (2, 2))  # a tool error wins
 

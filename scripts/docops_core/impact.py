@@ -533,9 +533,10 @@ def assess(parsed: ParsedReport, snapshot: Optional[Snapshot], remote_oid: Optio
            spec_tracks: Optional[Callable[[Snapshot], Sequence[str]]] = None) -> dict:
     """Validate `parsed` against one snapshot. GitError propagates (tool failure).
     A malformed report needs no snapshot, so `snapshot` may be None for it.
-    `spec_tracks(snapshot)` returns the registered SPEC track paths of a snapshot (the same
-    rule as the SPEC check) or raises SpecPolicyUnreadable; only registered tracks count as
-    "a SPEC" for the no-SPEC-created comparison (ADR-0014 Decision 2)."""
+    `spec_tracks(snapshot)` returns the SPEC candidate paths of a snapshot (the same
+    classification as the SPEC check: the root SPEC.md once, the registered tracks, and any
+    SPEC.md that is not validly classified) or raises SpecPolicyUnreadable; only these count
+    as "a SPEC" for the no-SPEC-created comparison (ADR-0014 Decision 2)."""
     if parsed.data is None:
         return _dimension(parsed, FAIL, "the impact report is malformed or incomplete; no "
                           "assessment is established", parsed.diagnostics)
@@ -660,12 +661,13 @@ def assess(parsed: ParsedReport, snapshot: Optional[Snapshot], remote_oid: Optio
 
 def _created_spec_tracks(subject_tracks: Sequence[str], base_tracks: Sequence[str],
                          subject_map: dict, base_map: dict) -> List[str]:
-    """SPEC paths that are created by the change, decided by path and registration alone
-    (ADR-0014 Decision 2). Candidates are every path registered as a SPEC track in the base
-    policy or in the subject policy. A candidate that has a file in the subject is created
-    if it was not registered in the base, or if no file existed at it in the base. Nothing
-    is correlated between paths: a SPEC relocated to a new path is created there, and
-    removing a registration while a file appears at that path is still seen."""
+    """SPEC paths that are created by the change, decided by path and classification alone
+    (ADR-0014 Decision 2). Candidates are the SPEC candidate paths of the base snapshot and of
+    the subject snapshot (the root SPEC.md, the registered tracks, and any SPEC.md that is not
+    validly classified). A candidate that has a file in the subject is created if it was not a
+    candidate in the base, or if no file existed at it in the base. Nothing is correlated
+    between paths: a SPEC relocated to a new path is created there, and removing a
+    registration while a file appears at that path is still seen."""
     registered_in_base = set(base_tracks)
     return sorted(
         path for path in set(subject_tracks) | registered_in_base

@@ -22,7 +22,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from helpers import (DocopsTestCase, GitFixture, clean_env, load_impact_schema,
+from helpers import (DocopsTestCase, GOOD_SPEC, GitFixture, clean_env, load_impact_schema,
                      run_check_json, run_cli, tree_digest, validate)
 
 from docops_core import checks, gitstate, impact
@@ -631,15 +631,43 @@ class ModeTests(ImpactCase):
         self.assertEqual((dim["status"], dim["diagnostics"] and codes(dim["diagnostics"], "fail")),
                          ("PASS", []))
 
-    def test_only_registered_spec_tracks_count_as_a_spec(self):
-        # unregistered files that merely have the name are Stage 1's out-of-scope warning, not a SPEC
+    def test_spec_candidates_follow_the_checker_classification(self):
+        # ADR-0014 Decision 2 / ADR-0013 Decision 7: a SPEC.md that is not validly classified is
+        # a SPEC for this rule; a validly listed non-active file and other names are not.
         for path in ("notes/Spec.md", "tests/fixtures/SPEC.md", "spec.md"):
-            with self.subTest(path):
-                D = self.commit_change({path: "# not a track\n"})
+            with self.subTest("unlisted " + path):
+                self.fx.git("reset", "-q", "--hard", self.B)
+                D = self.commit_change({path: "# not listed\n"})
                 report = minimal_report(self.tA, self.tree(D), self.changed_since_a(D),
                                         evidence=[review("e1", self.tree(D))])
                 dim = self.dim(report)
-                self.assertEqual(dim["status"], "PASS", dim["diagnostics"])
+                self.assertEqual(dim["status"], "FAIL", dim["diagnostics"])
+                self.assertIn("SPEC_CREATED_CONTRADICTS_REPORT", codes(dim["diagnostics"], "fail"))
+        with self.subTest("listed as non-active"):
+            self.fx.git("reset", "-q", "--hard", self.B)
+            listed = json.dumps({"schema_version": 1, "specs": [], "non_active_specs": [
+                {"path": "tests/fixtures/SPEC.md", "reason": "fixture"}]})
+            D = self.commit_change({"tests/fixtures/SPEC.md": "# fixture\n",
+                                    ".docops-policy.json": listed})
+            report = minimal_report(self.tA, self.tree(D), self.changed_since_a(D),
+                                    evidence=[review("e1", self.tree(D))])
+            self.assertEqual(self.dim(report)["status"], "PASS")
+        with self.subTest("listed without a reason is unclassified"):
+            self.fx.git("reset", "-q", "--hard", self.B)
+            listed = json.dumps({"schema_version": 1, "specs": [], "non_active_specs": [
+                {"path": "tests/fixtures/SPEC.md"}]})
+            D = self.commit_change({"tests/fixtures/SPEC.md": "# fixture\n",
+                                    ".docops-policy.json": listed})
+            report = minimal_report(self.tA, self.tree(D), self.changed_since_a(D),
+                                    evidence=[review("e1", self.tree(D))])
+            self.assertEqual(self.dim(report)["status"], "FAIL")
+        with self.subTest("other names are not detected"):
+            self.fx.git("reset", "-q", "--hard", self.B)
+            D = self.commit_change({"docs/SPEC.txt": "x\n", "docs/SPECIFICATION.md": "x\n"})
+            report = minimal_report(self.tA, self.tree(D), self.changed_since_a(D),
+                                    evidence=[review("e1", self.tree(D))])
+            self.assertEqual(self.dim(report)["status"], "PASS")
+        self.fx.git("reset", "-q", "--hard", self.B)
         policy = json.dumps({"schema_version": 1, "specs": [{"path": "docs/SPEC.md", "track": "d"}]})
         D = self.commit_change({"docs/SPEC.md": "# registered\n", ".docops-policy.json": policy})
         report = minimal_report(self.tA, self.tree(D), self.changed_since_a(D),
@@ -647,6 +675,30 @@ class ModeTests(ImpactCase):
         dim = self.dim(report)
         self.assertEqual(dim["status"], "FAIL")
         self.assertIn("SPEC_CREATED_CONTRADICTS_REPORT", codes(dim["diagnostics"], "fail"))
+
+    def test_the_root_spec_is_a_candidate_once_with_or_without_a_policy_entry(self):
+        # Created root SPEC.md: seen when no policy exists, when a policy omits it, and when a
+        # policy lists it explicitly; in each case reported exactly once.
+        variants = {
+            "no policy": {},
+            "policy omits the root": {".docops-policy.json": json.dumps(
+                {"schema_version": 1, "specs": []})},
+            "explicit root entry": {".docops-policy.json": json.dumps(
+                {"schema_version": 1, "specs": [{"path": "SPEC.md", "track": "root"}]})},
+        }
+        for name, extra in variants.items():
+            with self.subTest(name):
+                self.fx.git("reset", "-q", "--hard", self.B)
+                D = self.commit_change({"SPEC.md": GOOD_SPEC, **extra})
+                repo = gitstate.open_repository(self.fx.root)
+                candidates = checks.spec_candidate_paths(gitstate.commit_snapshot(repo, "HEAD"))
+                self.assertEqual(candidates.count("SPEC.md"), 1, candidates)
+                report = minimal_report(self.tA, self.tree(D), self.changed_since_a(D),
+                                        evidence=[review("e1", self.tree(D))])
+                dim = self.dim(report)
+                self.assertEqual(dim["status"], "FAIL")
+                self.assertEqual(codes(dim["diagnostics"], "fail").count(
+                    "SPEC_CREATED_CONTRADICTS_REPORT"), 1)
 
     def changed_since_a(self, commit):
         return self.fx.git("diff", "--no-renames", "--name-only", self.tA, commit).splitlines()
@@ -788,7 +840,7 @@ class ModeTests(ImpactCase):
                 self.commit_change({".docops-policy.json": broken}, "corrupt policy")
                 base = self.tree("HEAD")
                 D = self.commit_change({".docops-policy.json": json.dumps(
-                    {"schema_version": 1, "specs": []}), "SPEC.md": "# appears\n"}, "fix and create")
+                    {"schema_version": 1, "specs": []}), "SPEC.md": GOOD_SPEC}, "fix and create")
                 report = minimal_report(base, self.tree(D), ["SPEC.md", ".docops-policy.json"],
                                         evidence=[review("e1", self.tree(D))])
                 code, result, _ = self.cli(report, "--tree", "HEAD")
@@ -1607,7 +1659,9 @@ class ExitCodeTests(ImpactCase):
         self.assertNotEqual(self.run_report(minimal_report(self.tA, self.tC, ["src/a.py"]),
                                             "--tree", "HEAD")[0], 2)
 
-    def test_exit_3_keeps_its_stage_1_meaning_and_is_never_used_for_the_impact_dimension(self):
+    def test_exit_3_is_never_used_for_the_impact_dimension_and_no_scope_rule_produces_it(self):
+        # ADR-0013 Decision 7 (amended): an unclassified SPEC.md FAILs the structure check
+        # (exit 1); the impact dimension keeps its own PASS/SKIP, and exit 3 stays defined.
         D = self.commit_change({"docs/SPEC.md": "# unregistered nested\n"})
         tD = self.tree(D)
         passing = minimal_report(self.tA, tD, ["src/a.py", "docs/"], mode="spec_driven",
@@ -1616,16 +1670,17 @@ class ExitCodeTests(ImpactCase):
         snap = result["snapshots"][0]
         self.assertEqual((snap["checks"]["SPEC_STRUCTURE"]["status"],
                           snap["checks"]["DOC_IMPACT_ASSESSMENT"]["status"], code),
-                         ("SKIP", "PASS", 3))
+                         ("FAIL", "PASS", 1))
         incomplete = minimal_report(self.tA, tD, ["src/a.py"], mode="spec_driven",
                                     evidence=[review("e1", tD)])
         code, result, _ = self.cli(incomplete, "--tree", "HEAD")
         snap = result["snapshots"][0]
         self.assertEqual((snap["checks"]["SPEC_STRUCTURE"]["status"],
                           snap["checks"]["DOC_IMPACT_ASSESSMENT"]["status"], code),
-                         ("SKIP", "SKIP", 1))
+                         ("FAIL", "SKIP", 1))
         for report in (passing, incomplete):
-            self.assertNotEqual(self.cli(report, "--tree", "HEAD")[0], 2)
+            self.assertNotIn(self.cli(report, "--tree", "HEAD")[0], (2, 3))
+        self.assertEqual(checks.exit_code_for("SKIP"), 3)  # still defined for the contract
 
     def test_the_summary_exit_code_is_the_worst_of_the_snapshots(self):
         self.assertEqual(checks.combined_exit_code([]), 0)

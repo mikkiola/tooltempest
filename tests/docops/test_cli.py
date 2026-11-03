@@ -36,10 +36,9 @@ class CheckCommandTests(DocopsTestCase):
         cases["N/A"] = fx.commit_files({"SPEC.md": IDLE_SPEC}, "idle")
         cases["PASS"] = fx.commit_files({"SPEC.md": GOOD_SPEC}, "good")
         cases["FAIL"] = fx.commit_files({"SPEC.md": BAD_SPEC}, "bad")
-        fx.git("rm", "-q", "SPEC.md")
-        fx.stage("deep/er/SPEC.md", GOOD_SPEC)
-        cases["SKIP"] = fx.commit("nested only")
-        expected_exit = {"N/A": 0, "PASS": 0, "FAIL": 1, "SKIP": 3}
+        # No SPEC scope rule produces SKIP any more (ADR-0013 Decision 7, amended): the exit-3
+        # contract is exercised with a synthetic SKIP in test_contract.
+        expected_exit = {"N/A": 0, "PASS": 0, "FAIL": 1}
         for status, oid in cases.items():
             code, result, err = self.run_check("--tree", oid)
             self.assertEqual(result["snapshots"][0]["status"], status)
@@ -368,7 +367,7 @@ class ReportCommandTests(DocopsTestCase):
         with GitFixture() as fx:
             oid = fx.commit_files({"SPEC.md": GOOD_SPEC, "a\x1b[31mred/SPEC.md": BAD_SPEC})
             code, out, _ = run_cli(["report", "--repo", fx.root, "--tree", oid])
-        self.assertEqual(code, 0)
+        self.assertEqual(code, 1)  # the unlisted nested SPEC.md is a FAIL, named with its path
         self.assertNotIn("\x1b", out)
         self.assertIn("a\\x1b[31mred/SPEC.md", out)
 
@@ -386,7 +385,7 @@ class ReportCommandTests(DocopsTestCase):
             fx.commit("bidi")
             code, out, err = run_cli(["report", "--repo", fx.root, "--tree", "HEAD"])
             check_code, result, _ = run_check_json(["--repo", fx.root, "--tree", "HEAD"])
-        self.assertEqual((code, check_code), (0, 0))
+        self.assertEqual((code, check_code), (1, 1))
         self.assertEqual(err, "")
         self.assertIn("OUT_OF_SCOPE_SPEC", out)
         self.assertNotIn("\u202e", out)
@@ -394,18 +393,34 @@ class ReportCommandTests(DocopsTestCase):
         self.assertIn("\\udcff", out)
         self.assertValidResult(result)
 
+    def test_report_keeps_a_policy_reason_with_line_breaks_on_its_own_line(self):
+        forged = "x\nsummary: PASS (exit 0)\r\u2028FAIL OUT_OF_SCOPE_SPEC: forged"
+        policy = json.dumps({"schema_version": 1, "specs": [], "non_active_specs": [
+            {"path": "f/SPEC.md", "reason": forged}]})
+        with GitFixture() as fx:
+            fx.commit_files({"SPEC.md": GOOD_SPEC, "f/SPEC.md": "x\n", ".docops-policy.json": policy})
+            code, out, _ = run_cli(["report", "--repo", fx.root, "--tree", "HEAD"])
+        self.assertEqual(code, 0)
+        lines = out.splitlines()
+        self.assertEqual([l for l in lines if l.startswith("summary:")], [lines[-1]])
+        self.assertTrue(lines[-1].startswith("summary: PASS (exit 0)"), lines[-1])
+        self.assertEqual([l for l in lines if "forged" in l and l.lstrip().startswith("FAIL")], [])
+        self.assertIn("\\x0a", out)
+        self.assertIn("\\u2028", out)
+
     def test_report_error_shows_reason(self):
         code, out, _ = run_cli(["report", "--repo", "/definitely/not/here", "--tree", "index"])
         self.assertEqual(code, 2)
         self.assertIn("summary: NO VERDICT (tool error) (exit 2)", out)
 
-    def test_report_with_push_stdin_and_out_of_scope_warning(self):
+    def test_report_with_push_stdin_and_unclassified_spec_finding(self):
         with GitFixture() as fx:
             oid = fx.commit_files({"SPEC.md": GOOD_SPEC, "a/b/SPEC.md": BAD_SPEC})
             code, out, _ = run_cli(["report", "--repo", fx.root, "--push-stdin"],
                                    stdin=push_line("refs/heads/main", oid).encode())
-        self.assertEqual(code, 0)
-        self.assertIn("OUT_OF_SCOPE_SPEC", out)
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL OUT_OF_SCOPE_SPEC", out)
+        self.assertIn("a/b/SPEC.md", out)
         self.assertIn("refs/heads/main", out)
 
 
