@@ -4,9 +4,19 @@
 
 Proposed, 2026-10-22. Implements Stage 2 of the DocOps tooling redesign
 (simplified change-impact review). Becomes Accepted when the Owner
-accepts the decisions below. It extends ADR-0013 (also Proposed) in two
-places only: Decision 9 there says the six non-structural dimensions are
-always `assessed: false`, and this record makes one of them,
+accepts the decisions below. Amended in place on 2026-11-03, still
+Proposed: the ADR rules in `docs/reference/documentation-rules.md` say an ADR
+"is never edited after acceptance", and this record has not been accepted.
+The amendment replaces the candidate-path rule in Decision 2, the exit 3
+statements in the Context table, Decision 8, the Consequences and the
+Confirmation table, and the Consequences bullet on unregistered SPECs, to
+follow the amended Decision 7 of ADR-0013 (the root
+`SPEC.md` is always evaluated and every `SPEC.md` is classified or fails); the
+earlier wording, in which the root was a candidate only when no policy file
+existed and unregistered files named `spec.md` were never candidates, is
+replaced, not kept as an alternative reading. It extends ADR-0013 (also
+Proposed) in two places only: Decision 9 there says the six non-structural
+dimensions are always `assessed: false`, and this record makes one of them,
 `DOC_IMPACT_ASSESSMENT`, assessable when a report is supplied; Decision 10
 there reserved evidence handling for this stage, and this record
 implements the read-only half of it (validation, no recording). It
@@ -36,7 +46,7 @@ investigation report. Provenance of each rule below:
 | Five modes; mode 2 organised by a plan; modes 3 to 5 need neither plan nor SPEC; `/spec` not invoked; report names the mode (B3, B3a, B3b) | approved plan |
 | Minimal versus full report (B4); stale evidence re-checked, the rest kept (B5) | approved plan, with the Owner's instruction for the exact shape |
 | The eight category names | a Stage 2 design decision, confirmed by the Owner on 2026-10-22 as the working taxonomy; the names were derived from the draft contract and Codex §H, and are **not a requirement of the approved Stage 0 plan**, which does not enumerate categories |
-| Exit code 1 for an incomplete required assessment; exit 3 left to Stage 4 | the Owner's instruction of 2026-10-22 (bounded final correction). The approved Stage 0 plan fixes no exit codes (checked by reading it); exit 3 for a SPEC_STRUCTURE SKIP already exists from Stage 1 (ADR-0013) and is not an approved Stage 0 requirement either |
+| Exit code 1 for an incomplete required assessment; exit 3 left to Stage 4 | the Owner's instruction of 2026-10-22 (bounded final correction). The approved Stage 0 plan fixes no exit codes (checked by reading it); exit 3, defined by Stage 1 (ADR-0013 Decision 9) for a SPEC_STRUCTURE SKIP, is not an approved Stage 0 requirement either (since the 2026-11-03 amendment of ADR-0013 Decision 7 the SPEC scope rules no longer produce SKIP, so exit 3 stays defined but unused) |
 | Evidence record fields (tree, scope, kinds, test counts), outcome-consistency rules, SPEC-created cross-check, path-coverage rule | Claude Code's derivation within the Owner's instruction; not in any earlier document |
 | Tests that were not run, zero or partial cannot become PASS; a commit message or a single exit code does not close a criterion | the Owner's required-fixtures list; also Codex Stage 3 text (not approved) |
 
@@ -87,20 +97,28 @@ commits are closed.
    limitation.** It runs whenever the report states `spec_created: false`:
    modes 2 to 5 must state it, and a mode 1 report may. It is deterministic
    and uses path and registration only. Candidate paths are the union of the
-   SPEC track paths registered in the base policy and in the subject policy
-   (each including the implicit root `SPEC.md` track when that snapshot has
-   no policy file). A candidate that has a file in the subject tree is
-   *created* if it was not registered as a track in the base policy, or if
+   SPEC paths of the base and the subject snapshot, taken by the same
+   classification as the checker (ADR-0013 Decision 7): the root `SPEC.md`,
+   always, once, whether or not a policy file exists or lists it; the tracks
+   registered in the policy; and any file named `SPEC.md` (case-insensitive)
+   that no category accepts, because an unclassified SPEC file is never
+   treated as valid. A file listed as non-active is not a candidate. A
+   candidate that has a file in the subject tree is
+   *created* if it was not a candidate in the base snapshot (the root
+   `SPEC.md` is a candidate in every snapshot, so it is never excluded by this
+   test; any other path is a base candidate only if the base policy registers
+   it or it was an unclassified SPEC file already present in the base), or if
    no file existed at that path in the base tree. Any created candidate
    makes the report FAIL (`SPEC_CREATED_CONTRADICTS_REPORT`). A candidate is
-   classified the same way whether its file was newly written, previously
-   existed as an unregistered file, or was relocated from another path.
+   judged by the same test whether its file was newly written, was already
+   present but not a candidate in the base, or was relocated from another
+   path.
    Because the base's tracks are candidates too, removing a registration
    while a file appears at that path in the same change is still detected.
    A SPEC that stays at its already registered path, edited, is not
-   created. Files that merely have the name `spec.md` outside the
-   registered tracks are Stage 1's out-of-scope warning, not candidates.
-   No correlation between removed and added paths is attempted.
+   created. A listed non-active file is classified, so it is not a
+   candidate; an unclassified `SPEC.md` is a candidate and also a FAIL of the
+   SPEC structure check. No correlation between removed and added paths is attempted.
    Move-detection was tried and is removed: three consecutive review rounds
    each found a new bypass of the same class (a non-SPEC file renamed to a
    tracked path with identical bytes, a note registered as a SPEC through
@@ -219,8 +237,9 @@ commits are closed.
    reserved for tool, usage and I/O errors: an unreadable report file or a
    Git failure while validating is a tool failure (exit 2, `error`
    object), never a verdict. Exit 3 keeps the meaning Stage 1 gave it
-   (SPEC applicability not established) and is not used for this
-   dimension; a dedicated code for incomplete assessments is deferred to
+   (SPEC applicability not established; ADR-0013 Decision 9 keeps it defined
+   although the amended Decision 7 no longer produces it) and is not used for
+   this dimension; a dedicated code for incomplete assessments is deferred to
    Stage 4. A snapshot's and the summary's exit code is the worst of the
    parts: 1 over 3 over 0. For a deleted ref
    and a well-formed report the dimension stays `assessed: false` with the
@@ -280,12 +299,13 @@ commits are closed.
   subject, is rejected outright.
 - Incomplete required assessments exit 1, the same code as a violation, and
   are told apart by the per-check status (SKIP versus FAIL) and the
-  diagnostics, not by the exit code. Exit 3 remains the Stage 1 SPEC code.
-- Only a registered SPEC track, in the base or the subject policy, can be
-  found created by a change. A SPEC at a path neither policy registers is
-  invisible to this rule (Stage 1 reports it as an out-of-scope warning). A
-  relocated SPEC counts as created at its destination; there is no
-  move-recognition (Decision 2).
+  diagnostics, not by the exit code. Exit 3 stays the code Stage 1 defined for SPEC applicability; the amended ADR-0013 Decision 7 no longer produces it.
+- The root `SPEC.md`, a track registered in the base or the subject policy,
+  and an unclassified `SPEC.md` can be found created by a change; a file
+  listed as non-active cannot. No SPEC-named file is invisible to this rule
+  unless the policy lists it as non-active with a reason. A relocated SPEC
+  counts as created at its destination; there is no move-recognition
+  (Decision 2).
 - Evidence that records a failure on a current tree FAILs the dimension even
   if no portion cites it. Other uncited evidence is only noted, except that
   uncited evidence on a tree missing from the repository still makes the
@@ -306,6 +326,12 @@ commits are closed.
 
 ## Confirmation & Revisit
 
+(The test matrix and counts below, including the B3 row, describe the code before the 2026-11-03
+amendment of Decision 2. Where a row says that a merely similarly named file
+does not contradict `spec_created: false`, or names the implicit root track,
+the amended Decision 2 governs; the evidence for it is in the tests of the
+commit that implements it.)
+
 The figures below are the author's runs of 2026-10-22; the mutation log is
 not kept in the repository and the Owner or a reviewer can re-run both
 commands. Confirmed by `python3 -B -m unittest discover -s tests/docops -t
@@ -319,7 +345,7 @@ all passing on Python 3.14.5 and 3.9.6. What each group establishes:
 | B4 | `ProfileTests`, the profile rows of `StructureTests` | a minimal and a full report each need exactly their own fields; all eight categories are required in a full report, each with paths xor a reason; a 32-path change reported as minimal passes when complete; equal base and subject is a FAIL | whether a change truly is minimal; whether any reason is true |
 | B5 | `FreshnessTests` | evidence goes stale when a path in its scope was added, deleted, edited or its mode changed, and not for other paths or a sibling prefix; two evidence entries over different scopes leave one portion SKIP and the other PASS; the dimension is SKIP while any required portion is stale and PASS again with renewed evidence; unverifiable or non-tree evidence trees never read as fresh | that a change outside every evidence scope is irrelevant |
 | Identity | `IdentityTests`, `Sha256RepositoryTests`, `TreeHashTests` | subject must equal the snapshot tree (commit, index, sha256 repository); the in-memory index tree equals `git write-tree` for ordering, modes, symlinks, gitlinks, unicode and empty indexes and is never written; absent, wrong-type and mismatched bases; push old tip verifies a base, a new ref or `--tree` does not claim it, and says so | that a base without a supplied old tip is the intended one |
-| Result contract | `ExitCodeTests`, `ResultContractTests`, `StructureTests` | PASS exits 0, FAIL and SKIP of this dimension exit 1 (an incomplete assessment never exits 0, and is distinct from a tool error, exit 2), Stage 1's SPEC SKIP still exits 3; results conform to the result schema; never N/A; an unreadable report or a Git failure is exit 2; an invalid subject policy is Stage 1's `POLICY_INVALID` (exit 2) and a Git failure reading the base policy is `IMPACT_GIT_ERROR` (exit 2), unlike an unreadable base policy (SKIP, exit 1); nothing in the repository or the report file changes; no `record` subcommand; a complete but false report passes and says `semantic_review: not established` | any semantic property |
+| Result contract | `ExitCodeTests`, `ResultContractTests`, `StructureTests` | PASS exits 0, FAIL and SKIP of this dimension exit 1 (an incomplete assessment never exits 0, and is distinct from a tool error, exit 2), exit 3 stays defined for a SPEC SKIP (pre-amendment: Stage 1's scope rules produced it; the amended ADR-0013 Decision 7 does not); results conform to the result schema; never N/A; an unreadable report or a Git failure is exit 2; an invalid subject policy is Stage 1's `POLICY_INVALID` (exit 2) and a Git failure reading the base policy is `IMPACT_GIT_ERROR` (exit 2), unlike an unreadable base policy (SKIP, exit 1); nothing in the repository or the report file changes; no `record` subcommand; a complete but false report passes and says `semantic_review: not established` | any semantic property |
 
 The input schema and the checker are cross-checked on 125 structural cases
 (104 malformed and 21 well-formed reports, accepted or rejected the same way

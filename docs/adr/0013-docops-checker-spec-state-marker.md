@@ -9,6 +9,21 @@ or modify any earlier ADR; `scripts/doc_sync.py`, `scripts/doc_sync_tier2.py`
 and the consumers' copies of `verify.py` are untouched and keep working
 until a later stage retires them.
 
+Amended in place on 2026-11-03, still Proposed. The ADR rules in
+`docs/reference/documentation-rules.md` forbid editing an ADR only after
+acceptance ("an ADR is never edited after acceptance"); this record has not
+been accepted. The amendment replaces Decision 7 and the "Default scope"
+alternatives row, adds three alternatives rows and a Consequences bullet,
+rewrites one Consequences bullet and one sentence of Decision 9, and adds a
+Confirmation note and a closing Source paragraph.
+The earlier Decision 7 (a `spec.md` outside the registry is a warning; the
+implicit root track exists only without a policy; an idle or empty scope
+with an unlisted `spec.md` is SKIP) is replaced, not kept as an alternative
+reading; Decision 7 as it now stands is the authoritative rule. The Owner
+gave the new rule on 2026-11-03: every repository has exactly one active
+project SPEC at its root, the checker always evaluates it, and nothing
+named `SPEC.md` is skipped silently.
+
 This record replaces two earlier drafts of the same decision. The first
 put the inactive marker in the SPEC body as an HTML comment; three
 independent review rounds each found new false-PASS or false-N/A paths,
@@ -181,20 +196,52 @@ no lock is repinned in this stage.
    plain list text; list markers use ASCII digits only. Checked or
    unchecked state is not judged. Checkboxes outside Milestones are never counted. Line endings
    may be LF, CRLF or CR; one UTF-8 BOM is allowed.
-7. **Registry.** An optional `.docops-policy.json`, read from the
-   inspected snapshot, registers SPEC tracks as `{path, track}` pairs
-   (schema `schemas/docops-policy.schema.json`; any depth, strict
-   validation, unknown keys rejected). It records where SPECs are, not
-   whether they are active. Without it, a root `SPEC.md`, if present, is
-   the single track `root`. A registered path absent from the snapshot is
-   a FAIL; a directory at a SPEC path is a FAIL and at the policy path a
-   tool failure, never "absent". A file named `spec.md` (case-insensitive)
-   outside the registered paths is reported as an `OUT_OF_SCOPE_SPEC`
-   warning (other spellings such as `SPEC.txt` are not detected). If such
-   a file exists and nothing in scope was checked, or every in-scope SPEC
-   is idle, the result is SKIP, not N/A ("no active task" is proven only
-   for the registered tracks); with an empty registry and no `spec.md`
-   anywhere it is N/A. With a PASS in scope the file stays a warning.
+7. **Root SPEC, registry and SPEC inventory.** (Amended in place on
+   2026-11-03 while the record is Proposed; see Status. This is the
+   authoritative current rule.) Every repository has one project SPEC, the
+   root `SPEC.md`. The checker evaluates it exactly once, whether or not a
+   policy file exists, under the track name `root` unless an explicit root
+   entry in the policy supplies another name (then that name is used in the
+   result). An optional `.docops-policy.json`,
+   read from the inspected snapshot, adds to that (schema
+   `schemas/docops-policy.schema.json`; any depth, strict validation,
+   unknown keys rejected). It records where SPECs are, not whether they
+   are active. It has two lists:
+   - `specs`: `{path, track}` pairs, the registered active tracks. An entry
+     whose path is the root `SPEC.md` is the root SPEC, under the track name
+     it gives; it is not a second track, is never evaluated twice, produces
+     no duplicate finding and is never a conflicting classification.
+   - `non_active_specs` (optional; a policy without it stays valid):
+     `{path, reason}` pairs, the explicitly listed non-active files, such as
+     a test fixture or historical material. Entries are exact file paths,
+     never directory prefixes, and each has a non-empty reason. Such a file
+     is not evaluated; the result lists it with its reason.
+
+   The checker inventories every tracked file whose basename is `SPEC.md`
+   (exact, case-insensitive) at any depth. Each must be in exactly one
+   category: the root SPEC, a registered active track, or a listed
+   non-active file. Any other `SPEC.md` is a FAIL that names the path and
+   the rule (code `OUT_OF_SCOPE_SPEC`, kept from the earlier version of
+   this decision). These are also each a FAIL: a path in two categories, a
+   duplicate entry, the root `SPEC.md` listed as non-active, a non-active
+   entry without a reason, and a non-active entry whose file no longer
+   exists. A registered path absent from the snapshot is a FAIL; a
+   directory at a SPEC path is a FAIL and at the policy path a tool
+   failure, never "absent". A case that cannot be classified, and any
+   invalid, conflicting or stale classification, never produces a PASS or
+   an N/A. A policy that lists only non-active files and registers
+   nothing else leaves the result what it would be without a policy. Other
+   spellings such as `SPEC.txt` are not detected. Because every SPEC file
+   is classified or fails, the SPEC scope rules no longer produce SKIP
+   (exit 3 stays defined in Decision 9).
+
+   This decision does not change what happens when the root `SPEC.md` is
+   absent. With no explicit root entry, an absent root is not a track, and
+   with nothing else in scope the result is N/A; an explicit root entry for
+   an absent file is a FAIL, as for any registered path. That the root SPEC
+   is mandatory in a consumer repository is a goal-level invariant that
+   later work enforces; making its absence a FAIL is a separate Owner
+   decision.
 8. **Snapshot binding.** `scripts/docops.py check|report --tree
    index|<rev>` (repeatable) and `--push-stdin` read the index (honouring
    `GIT_INDEX_FILE`) or the named commit's tree through Git plumbing
@@ -226,7 +273,9 @@ no lock is repinned in this stage.
    `checks` and `status` null; top-level problems appear in
    `summary.reason`. Any tool failure makes `summary.status` null, so
    partial results are never summarised as a verdict. Exit codes: 0 PASS
-   or N/A, 1 FAIL, 2 tool failure, 3 SKIP. A missing or broken package,
+   or N/A, 1 FAIL, 2 tool failure, 3 SKIP (since the amendment of
+   Decision 7 the SPEC scope rules no longer produce SKIP; the code stays
+   defined). A missing or broken package,
    an internal exception, an unwritable stdout and an empty request all
    exit non-zero. A command-line usage error (no `--tree`, unknown
    option) exits 2 with a message on stderr and no JSON document, since
@@ -253,7 +302,10 @@ no lock is repinned in this stage.
 | Empty or absent `## Milestones` means idle | Rejected: indistinguishable from a truncated or damaged SPEC, which must FAIL. |
 | Full YAML frontmatter via a YAML library | Rejected: third-party dependency, and a general parser accepts structure (anchors, multi-document, flow style) that makes "exactly once, exactly this value" harder to guarantee. |
 | Tolerant matching (any case, any spacing, quoted values) | Rejected: tolerance is how a typo or truncation could read as inactive. Near-misses FAIL with a diagnostic. |
-| Default scope of root plus one directory level (old behaviour) | Rejected: depth was arbitrary and the exclusion list (`docs`, `scripts`, hidden dirs) was a guess. Root by default, anything else registered, nothing skipped silently. |
+| Default scope of root plus one directory level (old behaviour) | Rejected: depth was arbitrary and the exclusion list (`docs`, `scripts`, hidden dirs) was a guess. The root is always evaluated; anything else is registered as active or listed as non-active, and every other `SPEC.md` fails (Decision 7). |
+| A `SPEC.md` outside the registry reported as a warning, with SKIP only when nothing active is in scope (the earlier Decision 7) | Rejected on 2026-11-03: beside an active, passing registered SPEC the file stayed a warning and the exit code was 0, so an unevaluated or malformed `SPEC.md` could pass; the warning was easy to miss in hook output. |
+| The root `SPEC.md` implicit only when there is no policy file (the earlier Decision 7) | Rejected on 2026-11-03: creating a policy for one extra track silently dropped the root from evaluation unless it was also registered by hand. |
+| Directory-prefix entries in `non_active_specs` | Rejected: a prefix would also hide any real SPEC placed under that directory. Entries are exact file paths, each with a reason. |
 | `ERROR` as a fifth per-check status | Rejected by the Owner: the approved contract has exactly four. A checker that cannot run is a tool failure (exit 2 plus an `error` object), not a result of any check. |
 | `INCOMPLETE` for unassessed dimensions (investigation §H) | Replaced by `assessed: false` with no status: INCOMPLETE would force a non-zero exit on every structural check that, by design, does not run tests or reviews, or else be ignored. A `NOT_EVALUATED` status value was tried and dropped because it is a fifth value in the per-check vocabulary. |
 
@@ -323,9 +375,13 @@ stage's receipts.
   not a PASS, unless the body is a valid active SPEC).
 - A SPEC starting with a thematic break `---` is read as frontmatter and
   FAILs if it is not flat `key: value` or is never closed.
-- ToolTempest checked against itself reports SKIP, because
-  `tests/fixtures/SPEC.md` is a SPEC file outside the (implicit) scope.
-  ToolTempest still has no SPEC canon of its own.
+- A repository that holds SPEC-named files which are not project
+  specifications, such as test fixtures, must list each one in
+  `non_active_specs` with a reason; otherwise the check FAILs. ToolTempest
+  still has no SPEC canon of its own.
+- A consumer with a `SPEC.md` that its policy neither registers nor lists
+  newly FAILs when it adopts a checker version carrying the amended
+  Decision 7. Nothing changes for a consumer until it repins.
 - Adding files under `scripts/` and `schemas/` means `MANIFEST.txt`
   grows by the checker files; consumers see them only when they choose
   to repin.
@@ -334,6 +390,10 @@ stage's receipts.
   acceptance.
 
 ## Confirmation & Revisit
+
+(The test count and the mutation figures below were measured before the
+2026-11-03 amendment of Decision 7; the evidence for the amended rule is in
+the tests of the commit that implements it.)
 
 Confirmed by `python3 -m unittest discover -s tests/docops -t
 tests/docops` (221 tests, run on Python 3.14 and 3.9): the four-case
@@ -377,3 +437,9 @@ contract are Owner decisions given after repeated blocked review rounds
 on the earlier designs; the key name `spec-state`, the exact deny-list
 tests and the registry split are Claude Code's derivation within that
 mandate.
+
+Amendment of 2026-11-03 (Decision 7, the matching alternatives rows and the
+Decision 9 and Consequences notes): the Owner's rule that every repository
+has exactly one active project SPEC at its root, which the checker always
+evaluates, and that nothing named `SPEC.md` is skipped silently; the field
+name `non_active_specs` and its `{path, reason}` shape are the Owner's.
