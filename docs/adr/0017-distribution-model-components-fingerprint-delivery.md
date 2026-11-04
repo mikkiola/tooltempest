@@ -1,6 +1,6 @@
 # ADR-0017: Distribution Model for DocOps — Components, Versions and Delivery
 
-Status: Proposed, 2026-11-04.
+Status: Accepted, 2026-11-04.
 
 ## Context & Constraints
 
