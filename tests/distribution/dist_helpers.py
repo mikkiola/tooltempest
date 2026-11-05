@@ -32,7 +32,7 @@ GitFixture = docops_helpers.GitFixture
 clean_env = docops_helpers.clean_env
 validate = docops_helpers.validate
 
-COMPOSITION_DIRS = ("scripts/", "schemas/", "skills/", "rules/", "docs/reference/")
+COMPOSITION_DIRS = ("scripts/", "schemas/", "skills/", "rules/", "docs/reference/", "docs/tooltempest/")
 
 
 def git_out(*args, cwd=REPO_ROOT, check=True):

@@ -1,4 +1,5 @@
 docs/reference/documentation-rules.md
+docs/tooltempest/consumer-contract.md
 rules/drift-control.md
 schemas/docops-impact-report.schema.json
 schemas/docops-policy.schema.json

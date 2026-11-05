@@ -2,8 +2,8 @@
 """Independent completeness check for MANIFEST.txt, per ADR-0006
 (docs/adr/0006-vendor-manifest.md) and ADR-0008
 (docs/adr/0008-reference-documentation-category.md). Compares
-MANIFEST.txt against `git ls-files` across the five Composition
-directories (scripts/, schemas/, skills/, rules/, docs/reference/) and
+MANIFEST.txt against `git ls-files` across the six Composition
+directories (scripts/, schemas/, skills/, rules/, docs/reference/, docs/tooltempest/) and
 exits non-zero on any mismatch in either direction (a file present on
 disk but missing from the manifest, or listed in the manifest but no
 longer present).
@@ -26,12 +26,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from doc_sync import repo_root  # noqa: E402
 
-# The five Composition directories: the four from ADR-0006 ("every
-# git-tracked file under scripts/, schemas/, skills/, rules/") plus
-# docs/reference/, added by ADR-0008 for shared reference documentation
-# -- the same directories README's "Composition"/"Scope" sections
-# describe.
-COMPOSITION_DIRS = ("scripts/", "schemas/", "skills/", "rules/", "docs/reference/")
+# The six Composition directories: the four from ADR-0006 ("every
+# git-tracked file under scripts/, schemas/, skills/, rules/"), docs/reference/,
+# added by ADR-0008 for shared reference documentation, and docs/tooltempest/,
+# the root of the consumer contract (ADR-0017).
+COMPOSITION_DIRS = ("scripts/", "schemas/", "skills/", "rules/", "docs/reference/", "docs/tooltempest/")
 
 MANIFEST_NAME = "MANIFEST.txt"
 

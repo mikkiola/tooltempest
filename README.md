@@ -87,13 +87,18 @@ cannot be established (defined, but no SPEC scope rule produces it any more;
 Tests: `python3 -B -m unittest discover -s tests/docops -t tests/docops`.
 
 Tooling bootstrap (added by ADR-0015 — `docs/adr/0015-tooling-bootstrap-verify-materialize.md`).
-Also source only and listed in `MANIFEST.txt`; no consumer uses it yet, and
-the consumers' own `scripts/sync-tooling.sh` is unchanged. It is a separate
+Listed in `MANIFEST.txt` and installed in a consumer by its pin. The consumers'
+own `scripts/sync-tooling.sh` installers are removed by each consumer under its
+own ADR (ADR-0017); until then a consumer does not run both. It is a separate
 command surface from the checker above.
 - `scripts/tooling.py` with `verify`, `status` and `materialize` — make a
-  consumer's repository-local dependencies (`scripts/`, `schemas/`)
-  reproducible in a fresh clone or a linked worktree, from verified Git
-  objects at the commit pinned in `.tooltempest.lock`
+  consumer's repository-local dependencies (`scripts/`, `schemas/` and the
+  contract root `docs/tooltempest/`) reproducible in a fresh clone or a linked
+  worktree, from verified Git objects at the commit pinned in
+  `.tooltempest.lock`. This is the consumer target, the default. The client
+  files (`skills/`, `rules/`) are installed only by the explicit client target,
+  `--target client --root DIR`, into a root the operator names; there is no
+  default client directory and no consumer run selects it
 - `scripts/tooling_core/` — the standard-library package behind it
 - `schemas/tooling-result.schema.json`, `schemas/tooling-receipt.schema.json`
 
@@ -107,7 +112,12 @@ commit and each file's hash and mode, upgrades only files it recognises as
 its own earlier version, refuses to overwrite an edited managed file or an
 unmanaged file, never repins, and fetches the pinned commit only with
 `--allow-network` and only when it is absent locally. It installs nothing
-under `~/.claude`; global skills stay out of its scope. Exit codes (also
+under a client directory unless the client target is invoked with an explicit
+root. Receipts are written in the lowest schema version that can hold their
+paths: version 1 for `scripts/` and `schemas/`, version 2 once the contract or
+client roots are installed; the reader accepts both and an older tool refuses
+version 2. A root outside Git keeps its install lock inside itself
+(`.tooltempest-install.lock`), opened without following links. Exit codes (also
 `summary.exit_code`; the same list is in `--help`): 0 for `verify` when local
 integrity and provenance are both established, for `status` unless the tool
 fails, and for `materialize` when the plan is executable or was applied and
@@ -121,12 +131,14 @@ only a minimal JSON object with `error.code` IMPORT_FAILED is printed, in any
 format. Tests:
 `python3 -B -m unittest discover -s tests/tooling -t tests/tooling`.
 
-`MANIFEST.txt` is longer than the seven mechanism files. By ADR-0006 and
-ADR-0008 it lists every tracked file under `scripts/`, `schemas/`, `skills/`,
-`rules/` and `docs/reference/`, so besides those seven it also holds the
-reference document below, the manifest validator `scripts/check_manifest.py`
-(a maintainer tool), the DocOps checker files and the tooling bootstrap
-files above.
+`MANIFEST.txt` is longer than the seven mechanism files. By ADR-0006, ADR-0008
+and ADR-0017 it lists every tracked file under `scripts/`, `schemas/`,
+`skills/`, `rules/`, `docs/reference/` and `docs/tooltempest/`, so besides those
+seven it also holds the reference document below, the consumer contract
+`docs/tooltempest/consumer-contract.md` (the text of the consumer obligation,
+its single source), the manifest validator `scripts/check_manifest.py` (a
+maintainer tool), the DocOps checker files and the tooling bootstrap files
+above.
 
 ## Reference documentation (added by ADR-0008)
 
@@ -157,26 +169,25 @@ and match on the full commit SHA.
 
 ## Client independence
 
-Staying client-agnostic is an architectural commitment for this
-repository: it does not and will not contain `.claude/`, `.cursor/`,
-or any other client-specific directory. Isolating the differences
-between consuming tools (Claude Code, and potentially others such as
-Cursor, Codex, or Windsurf in the future) is expected to be the job of
-a separate CLI adapter layer. That adapter has not been built yet —
-its design is a separate task and is out of scope for this repository as it
-stands today.
+Staying client-agnostic is an architectural commitment for this repository: it
+does not and will not contain `.claude/`, `.cursor/`, or any other
+client-specific directory, and it has no default client path. The differences
+between consuming tools (Claude Code, and potentially others such as Cursor,
+Codex or Windsurf) are handled by the operator's choice of root, not by code
+here.
 
-**Delivery of skills and rules to a client.** Installing the pinned `skills/`
-and `rules/` files into a client's configuration directory (for Claude Code,
-`~/.claude`) is the job of that separate client adapter. The adapter does not
-exist yet and is the next planned component; it is to install the pinned files
-and verify them against the pinned commit. ToolTempest itself delivers nothing
-to a client directory: `scripts/tooling.py` installs only `scripts/` and
-`schemas/` into a consumer repository, and the checker never writes outside
-the repository it inspects. Until the adapter exists, a client's installed
-copies are put in place by hand or by a consumer's own installer, so they can
-differ from the pinned files; compare them with the pinned commit before
-relying on them.
+**Delivery of skills and rules to a client.** The pinned `skills/` and `rules/`
+files are installed into a client's configuration directory (for Claude Code,
+`~/.claude`) by the client target of the same materializer, ADR-0017: `python3
+scripts/tooling.py materialize --target client --root DIR`, with the lock and
+the receipt in that root (`.tooltempest.lock`, `.tooltempest.receipt.json`),
+one pair per machine. It is selected only by that explicit argument and never
+by a consumer run or a hook, it needs an explicit `--root`, and it uses the
+same plan, refusal to overwrite an edited or unmanaged file, verification and
+receipt as the consumer target. The checker never writes outside the
+repository it inspects. A client's files that were put in place by hand or by a
+consumer's own installer can differ from the pinned files; compare them with
+the pinned commit (`verify --target client --root DIR`) before relying on them.
 
 ## Update model
 
@@ -203,35 +214,38 @@ previously cached still requires reaching GitHub. `scripts/tooling.py`
 local cache and reaches the network only for `materialize --allow-network`
 when that commit is absent.
 
-## Usage today (manual — no adapter exists yet)
+## Usage today
 
-There is no client adapter. Besides the hook entry points
-`scripts/doc_sync.py` and `scripts/doc_sync_tier2.py` that consumers already
-run, the CLIs are the source-only `scripts/docops.py` and `scripts/tooling.py`
-described above, which no consumer has adopted yet. Until a consumer does, using ToolTempest in a
-consuming project is a manual process, and differs by which part of the
-composition a project adopts.
+Files are installed from the commit pinned in `.tooltempest.lock` by
+`scripts/tooling.py materialize` (described above): the default consumer target
+for `scripts/`, `schemas/` and the contract, the explicit client target for
+`skills/` and `rules/`. Besides the hook entry points `scripts/doc_sync.py` and
+`scripts/doc_sync_tier2.py` that consumers already run, the CLIs are
+`scripts/docops.py` and `scripts/tooling.py`. What a project adopts differs by
+which part of the composition it uses.
 
-**V1 markdown primitives** — copied into place for your client, e.g.
-for Claude Code:
+**V1 markdown primitives** — installed into your client's configuration
+directory by the client target, e.g. for Claude Code:
 
 1. Clone this repository and check out the specific commit SHA you
    intend to use (do not float on a branch).
-2. Copy the three files:
-   - `skills/spec/SKILL.md` → `~/.claude/skills/spec/SKILL.md`
-   - `skills/verify/SKILL.md` → `~/.claude/skills/verify/SKILL.md`
-   - `rules/drift-control.md` → `~/.claude/rules/drift-control.md`
-3. Record the full commit SHA you used in your consuming project's
-   `.tooltempest.lock` file, so the exact version in use is
-   reproducible later.
+2. Record that full commit SHA in a `.tooltempest.lock` in the client root
+   (for Claude Code, `~/.claude/.tooltempest.lock`), so the exact version in
+   use is reproducible later.
+3. Install the files, first as a dry run and then with `--apply`:
+   `python3 scripts/tooling.py materialize --target client --root ~/.claude
+   --source <your clone>`. This writes `skills/spec/SKILL.md`,
+   `skills/verify/SKILL.md`, `skills/doc-sync/SKILL.md` and
+   `rules/drift-control.md` into that root, and refuses to overwrite a file
+   it does not manage.
 
 **V2 DocOps Protocol** — opt-in, per project, wired through local git
 hooks rather than copied into a client config directory:
 
 1. Same clone-and-pin step as above; `scripts/doc_sync.py` is run from
    wherever the consuming project's own tooling makes it available
-   (for example, `scripts/sync-tooling.sh` in `mikkiola/article-pipeline`
-   copies it in alongside the V1 primitives).
+   (for example, `scripts/tooling.py materialize --apply` installs it with the
+   other `scripts/` files of the pin).
 2. The consuming project's `.git/hooks/pre-commit` and
    `.git/hooks/pre-push` call `doc_sync.py pre-commit` /
    `doc_sync.py pre-push` respectively, and carry a header comment
@@ -254,14 +268,11 @@ consumer. This restates "Usage today" above as a linear sequence; for
    project's `.tooltempest.lock` with the full 40-character commit SHA
    you intend to use — never a branch name or tag. See "Version
    identity" above.
-2. **Initial install.** No consumer has adopted ToolTempest's own
-   `scripts/tooling.py` yet, so a consuming project still needs its own
-   installer, following the pattern already proven in
-   `mikkiola/article-pipeline`'s `scripts/sync-tooling.sh`:
-   clone this repository, check out the pinned SHA, and copy the V1
-   primitives plus `scripts/doc_sync.py` /
-   `schemas/execution-record.schema.json` into place, per "Usage
-   today" above.
+2. **Initial install.** Run `python3 scripts/tooling.py materialize --apply`
+   from a checkout of this repository that holds the pinned SHA (or with
+   `--source`), in the consuming project: it installs `scripts/`, `schemas/`
+   and the contract file `docs/tooltempest/consumer-contract.md` from the pin
+   and writes a receipt. A consuming project needs no installer of its own.
 3. **Activate the git hooks.** Again following article-pipeline's
    pattern (`scripts/install-hooks.sh`, also not part of this
    repository): install `pre-commit` and `pre-push` hooks that call
@@ -269,17 +280,11 @@ consumer. This restates "Usage today" above as a linear sequence; for
    comment citing `ADR-0001` and the pinned SHA, per "Usage today"
    above. Re-run this after every resync so `.git/hooks/` picks up any
    hook-source changes.
-4. **Optional but recommended: Drift Warning.** ToolTempest does not
-   provide this — it is not part of Composition (V2) and does not come
-   for free just by adopting `doc_sync.py`. It lives entirely in
-   `mikkiola/article-pipeline`'s own `scripts/hooks/pre-push`, not in
-   this repository, so each consumer that wants it has to replicate
-   the pattern into its own pre-push hook independently. See
-   `mikkiola/article-pipeline`'s `docs/adr/0032-drift-warning.md` for
-   the design and that repository's `scripts/hooks/pre-push` for the
-   reference implementation (a `git ls-remote` check against this
-   repository's `origin/main`, compared against the consumer's own
-   `.tooltempest.lock` pin).
+4. **No network in hooks.** Consumer hooks make no network calls
+   (ADR-0017). ToolTempest does not provide a hook-time drift warning; a
+   consumer that has one (a `git ls-remote` check in its pre-push hook) decides
+   in its own ADR to remove it. Freshness is reported by `tooling.py status`
+   from a local ref.
 5. **Reading a HARD BLOCK or WARNING.** Both come from `doc_sync.py`
    or the consumer's own `scripts/verify.py`, printed directly to the
    terminal at commit/push time — read that output first, not "ask
@@ -289,10 +294,9 @@ consumer. This restates "Usage today" above as a linear sequence; for
      invalid, or `scripts/verify.py` itself failed to run — the
      printed message states which, and what to do about each case.
      See ADR-0001 for the underlying RECONCILE/VALIDATE contract.
-   - A **WARNING** (Drift Warning, if replicated per step 4 above, or
-     any similar consumer-side check) never blocks anything — it's
-     informational. Read the printed line for which command to run
-     next (e.g. `scripts/sync-tooling.sh`).
+   - A **WARNING** (any consumer-side check) never blocks anything —
+     it's informational. Read the printed line for which command to run
+     next (e.g. `scripts/tooling.py materialize`).
 
 ## Scope
 
