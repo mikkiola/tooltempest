@@ -116,8 +116,14 @@ under a client directory unless the client target is invoked with an explicit
 root. Receipts are written in the lowest schema version that can hold their
 paths: version 1 for `scripts/` and `schemas/`, version 2 once the contract or
 client roots are installed; the reader accepts both and an older tool refuses
-version 2. A root outside Git keeps its install lock inside itself
-(`.tooltempest-install.lock`), opened without following links. Exit codes (also
+version 2. A root that is the top level of its own Git work tree keeps its
+install lock in that repository's Git directory. Any other root (outside Git, or
+inside another repository's work tree without being its top level) keeps it
+inside itself (`.tooltempest-install.lock`), opened without following links; if
+Git cannot say which case applies, `--apply` stops before any write. A receipt
+or journal that records files of the other target (consumer or client) is
+refused (`RECEIPT_OTHER_TARGET`) before any write: use a separate root for each
+target. Exit codes (also
 `summary.exit_code`; the same list is in `--help`): 0 for `verify` when local
 integrity and provenance are both established, for `status` unless the tool
 fails, and for `materialize` when the plan is executable or was applied and

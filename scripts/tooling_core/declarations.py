@@ -255,6 +255,13 @@ def receipt_path_allowed(path: str, version: int) -> bool:
     return version == RECEIPT_SCHEMA_VERSION_2 and (path.startswith(CONTRACT_PREFIX) or _in_roots(path, CLIENT_ROOTS))
 
 
+def target_owns(path: str, target: str) -> bool:
+    """Whether `path` is one this target installs (by root); the other target's records are not."""
+    if target == TARGET_CLIENT:
+        return _in_roots(path, CLIENT_ROOTS)
+    return _in_roots(path, INSTALL_ROOTS) or path.startswith(CONTRACT_PREFIX)
+
+
 def lowest_receipt_version(paths) -> int:
     """The lowest schema version that can express these paths."""
     return RECEIPT_SCHEMA_VERSION if all(receipt_path_allowed(p, RECEIPT_SCHEMA_VERSION) for p in paths) \

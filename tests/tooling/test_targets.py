@@ -22,6 +22,7 @@ from unittest import mock
 from tooling_helpers import (REAL_CLAUDE_DIR, REAL_HOME, TOOLING_PY, RealClaudeTouched, ToolingCase,
                              UNREACHABLE_URL, engine, load_schema, run_tooling, RECEIPT_SCHEMA, validate)
 from tooling_core.declarations import FormatError, parse_receipt
+from tooling_core.objects import GitFailure, GitMissing
 
 CONTRACT = "docs/tooltempest/consumer-contract.md"
 CONTRACT_FILES = {CONTRACT: "# contract v1\n", "skills/demo/SKILL.md": "# skill v1\n", "rules/r.md": "# rule v1\n"}
@@ -447,6 +448,92 @@ class InstallLockOutsideGitTests(TargetCase):
         self.assertFalse(self.consumer.exists(".tooltempest-install.lock"))
         git_dir = self.consumer.fx.git("rev-parse", "--absolute-git-dir")
         self.assertTrue(os.path.isfile(os.path.join(git_dir, "tooltempest-install.lock")))
+
+
+class InstallLockPlacementTests(TargetCase):
+    """Where the lock goes follows what Git says about the root, and never moves silently."""
+
+    def test_a_root_inside_another_repositorys_work_tree_never_gets_its_lock_in_that_repositorys_git_dir(self):
+        commit = self.publish_with_contract()
+        self.client = os.path.join(self.consumer.root, "inner-client")  # in the consumer's work tree, not its top
+        os.mkdir(self.client)
+        self.client_lock(commit)
+        code, doc = self.client_run("materialize", "--apply")
+        self.assertEqual(code, 0, doc["findings"])
+        self.assertTrue(stat.S_ISREG(os.lstat(self.client_path(".tooltempest-install.lock")).st_mode))
+        git_dir = self.consumer.fx.git("rev-parse", "--absolute-git-dir")
+        self.assertFalse(os.path.lexists(os.path.join(git_dir, "tooltempest-install.lock")),
+                         "a lock inside another repository's Git directory")
+
+    def test_a_root_typed_in_another_letter_case_still_keeps_its_lock_in_its_git_directory(self):
+        root = self.consumer.root
+        swapped = os.path.join(os.path.dirname(root), os.path.basename(root).swapcase())
+        if not os.path.exists(swapped):
+            self.skipTest("a case-sensitive filesystem: the same directory has no second spelling")
+        self.publish_v1()
+        code, doc = self.materialize("--apply", root=swapped)
+        self.assertEqual(code, 0, doc["findings"])
+        git_dir = self.consumer.fx.git("rev-parse", "--absolute-git-dir")
+        self.assertTrue(os.path.isfile(os.path.join(git_dir, "tooltempest-install.lock")))
+        self.assertFalse(self.consumer.exists(".tooltempest-install.lock"))
+
+    def test_when_git_cannot_say_where_the_lock_belongs_the_run_stops_before_any_write(self):
+        self.publish_with_contract()
+        failures = {"dubious ownership": GitFailure("git rev-parse failed (exit 128): fatal: detected "
+                                                    "dubious ownership in repository at '/x'"),
+                    "git missing": GitMissing("git executable not found")}
+        for name, failure in failures.items():
+            with self.subTest(name):
+                before = self.digest(self.client)
+                options = self.engine_options(root=self.client, lock_path=self.client_path(".tooltempest.lock"),
+                                              receipt_path=self.client_path(".tooltempest.receipt.json"),
+                                              target="client", apply=True)
+                with mock.patch.object(engine, "run_git", side_effect=failure):
+                    with self.assertRaises(engine.ToolFailure) as caught:
+                        engine.run_materialize(options)
+                self.assertEqual(caught.exception.code, "GIT_FAILED")
+                self.assertEqual(self.digest(self.client), before)
+                self.assertFalse(os.path.lexists(self.client_path(".tooltempest-install.lock")))
+                self.assertFalse(os.path.exists(self.client_path("skills")))
+
+
+class SharedReceiptTests(TargetCase):
+    """One target never deletes the records of the other target from a receipt it finds."""
+
+    def test_a_client_run_in_a_root_that_holds_consumer_records_is_refused_and_the_receipt_is_kept(self):
+        self.publish_with_contract()
+        self.apply()
+        kept = self.consumer.receipt()
+        for extra in ((), ("--apply",)):
+            with self.subTest(extra=extra):
+                code, doc = self.client_run("materialize", *extra, root=self.consumer.root)
+                self.assertEqual(code, 1)
+                self.assertIn("RECEIPT_OTHER_TARGET", self.codes(doc, "error"))
+                self.assertEqual(self.consumer.receipt(), kept)
+                self.assertFalse(self.consumer.exists("skills"))
+
+    def test_a_journal_that_records_consumer_files_is_refused_by_the_client_target_too(self):
+        self.publish_with_contract()
+        self.interrupt_after(1)
+        self.assertEqual(self.consumer.receipt()["state"], "installing")
+        kept = self.consumer.receipt()
+        code, doc = self.client_run("materialize", "--apply", root=self.consumer.root)
+        self.assertEqual(code, 1)
+        self.assertIn("RECEIPT_OTHER_TARGET", self.codes(doc, "error"))
+        self.assertEqual(self.consumer.receipt(), kept)
+        self.assertFalse(self.consumer.exists("skills"))
+
+    def test_a_consumer_run_in_a_root_that_holds_client_records_is_refused_and_the_receipt_is_kept(self):
+        self.publish_with_contract()
+        self.client_run("materialize", "--apply")
+        kept = self.client_receipt()
+        for extra in ((), ("--apply",)):
+            with self.subTest(extra=extra):
+                code, doc = self.run_json("materialize", *extra, root=self.client)
+                self.assertEqual(code, 1)
+                self.assertIn("RECEIPT_OTHER_TARGET", self.codes(doc, "error"))
+                self.assertEqual(self.client_receipt(), kept)
+                self.assertFalse(os.path.exists(self.client_path("scripts")))
 
 
 class TestIsolationGuardTests(unittest.TestCase):

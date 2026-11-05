@@ -33,8 +33,9 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from . import RESULT_SCHEMA_VERSION, TOOL_NAME, TOOL_VERSION, fsops
-from .declarations import (TARGET_CONSUMER, FormatError, Lock, Manifest, Receipt, ReceiptFile,
-                           parse_lock, parse_manifest, parse_receipt, path_problem, serialize_receipt)
+from .declarations import (TARGET_CLIENT, TARGET_CONSUMER, FormatError, Lock, Manifest, Receipt,
+                           ReceiptFile, parse_lock, parse_manifest, parse_receipt, path_problem,
+                           serialize_receipt, target_owns)
 from .objects import (MODE_FILES, MODE_GITLINK, MODE_SYMLINK, MODE_TREE, GitFailure,
                       GitMissing, ObjectCorrupt, ObjectMissing, ObjectStore, TreeEntry,
                       fetch_commit, fetch_url_problem, run_git)
@@ -675,6 +676,21 @@ def _plan_finding(code: str, item: Item, message: str) -> dict:
             "unrecognised content)"}
 
 
+def _other_target_findings(ev: Evaluation) -> List[dict]:
+    """A receipt (or journal) that records files of the other target is refused before any write:
+    the receipt this run writes holds only this target's files, so it would drop those records."""
+    if ev.receipt is None:
+        return []
+    foreign = sorted(p for p in ev.receipt.files if not target_owns(p, ev.opts.target))
+    if not foreign:
+        return []
+    other = TARGET_CLIENT if ev.opts.target == TARGET_CONSUMER else TARGET_CONSUMER
+    return [{"code": "RECEIPT_OTHER_TARGET", "severity": "error", "path": foreign[0],
+             "message": "the receipt records %d file(s) of the %s target (first: %s); the %s target "
+                        "would drop them" % (len(foreign), other, foreign[0], ev.opts.target),
+             "hint": "nothing was written; use a separate --root (and --receipt) for each target"}]
+
+
 def _final_receipt(ev: Evaluation, state: str, with_previous: bool) -> Receipt:
     files: Dict[str, ReceiptFile] = {}
     for item in ev.items:
@@ -735,7 +751,7 @@ def _prepare(ev: Evaluation):
     blocked = [f for f in ev.findings if f["severity"] == "error"]
     plan_problems: List[dict] = []
     if not blocked:
-        plan_problems = _plan(ev)
+        plan_problems = _other_target_findings(ev) or _plan(ev)
     doc = document(ev, "materialize", {"result": result})
     doc["findings"] = ev.findings + plan_problems
     errors = [f for f in doc["findings"] if f["severity"] == "error"]
@@ -967,7 +983,32 @@ class _LockGuard:
             pass
 
 
-INSTALL_LOCK_NAME = ".tooltempest-install.lock"  # inside a root that is not a Git checkout
+INSTALL_LOCK_NAME = ".tooltempest-install.lock"  # inside a root that is not the top level of its own work tree
+
+
+def _lock_git_dir(root: str) -> Optional[str]:
+    """The Git directory that holds the install lock when `root` is the top level of its own work
+    tree; None when `root` is a plain directory (outside every work tree, or inside another
+    repository's work tree without being its top level), whose lock stays inside the root. Any
+    other answer from Git (missing, refused, timed out, a bare or internal directory) is a failure:
+    the lock never moves silently."""
+    try:
+        top = run_git(["rev-parse", "--show-toplevel"], cwd=root).stdout
+    except GitFailure as exc:
+        if "not a git repository" in str(exc):
+            return None
+        raise ToolFailure("GIT_FAILED", "cannot decide where the install lock belongs: %s" % exc)
+    try:  # identity, not spelling: a case-insensitive filesystem accepts a root typed in another case
+        same = os.path.samefile(top.decode("utf-8", "surrogateescape").strip() or os.sep, root)
+    except OSError as exc:
+        raise ToolFailure("IO_ERROR", "cannot decide where the install lock belongs: %s" % exc.strerror)
+    if not same:
+        return None
+    try:
+        return run_git(["rev-parse", "--absolute-git-dir"], cwd=root).stdout.decode(
+            "utf-8", "surrogateescape").strip()
+    except GitFailure as exc:
+        raise ToolFailure("GIT_FAILED", "cannot decide where the install lock belongs: %s" % exc)
 
 
 def _acquire_lock(opts: Options) -> Optional[_LockGuard]:
@@ -975,13 +1016,10 @@ def _acquire_lock(opts: Options) -> Optional[_LockGuard]:
         import fcntl
     except ImportError:
         raise ToolFailure("UNSUPPORTED_PLATFORM", "materialize --apply needs POSIX file locking")
-    try:
-        git_dir = run_git(["rev-parse", "--absolute-git-dir"], cwd=opts.root).stdout
-    except GitFailure:
-        git_dir = None  # a root outside Git (the client root, for example) keeps its lock inside itself
+    git_dir = _lock_git_dir(opts.root)
     if git_dir is not None:
-        path = os.path.join(git_dir.decode("utf-8", "surrogateescape").strip(), "tooltempest-install.lock")
-        flags = os.O_RDWR | os.O_CREAT  # the in-repository lock is not changed here (ADR-0017, follow-up)
+        path = os.path.join(git_dir, "tooltempest-install.lock")
+        flags = os.O_RDWR | os.O_CREAT  # the lock of a root that is its own repository is unchanged
     else:
         path = os.path.join(opts.root, INSTALL_LOCK_NAME)
         if not hasattr(os, "O_NOFOLLOW"):
