@@ -20,12 +20,20 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
-from . import RECEIPT_SCHEMA_VERSION, TOOL_NAME, TOOL_VERSION
+from . import (RECEIPT_SCHEMA_VERSION, RECEIPT_SCHEMA_VERSION_2, SUPPORTED_RECEIPT_VERSIONS, TOOL_NAME,
+               TOOL_VERSION)
 from .objects import is_oid
 
 MAX_TEXT_BYTES = 1024 * 1024
-INSTALL_ROOTS = ("scripts", "schemas")  # repository-local; copied to the same relative path
-GLOBAL_ROOTS = ("skills", "rules")  # client configuration under ~/.claude: never touched here
+# Targets of the materializer (ADR-0017). The consumer target is the default; the client target is
+# selected only by an explicit argument and has no default root.
+TARGET_CONSUMER = "consumer"
+TARGET_CLIENT = "client"
+TARGETS = (TARGET_CONSUMER, TARGET_CLIENT)
+INSTALL_ROOTS = ("scripts", "schemas")  # core: repository-local; copied to the same relative path
+CONTRACT_PREFIX = "docs/tooltempest/"  # contract: its own root, installed by the consumer target
+CLIENT_ROOTS = ("skills", "rules")  # client: installed only by the explicit client target
+GLOBAL_ROOTS = CLIENT_ROOTS  # the earlier name of the client roots
 REFERENCE_PREFIX = "docs/reference/"  # consulted in place, never copied (ADR-0008)
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}\Z")
@@ -161,7 +169,16 @@ class Manifest:
     skipped: List[Tuple[str, str]]  # (path, reason): never copied by this tool
 
 
-def parse_manifest(raw: bytes) -> Manifest:
+def _in_roots(line: str, roots: Tuple[str, ...]) -> bool:
+    return line.split("/", 1)[0] in roots and "/" in line
+
+
+def parse_manifest(raw: bytes, target: str = TARGET_CONSUMER) -> Manifest:
+    """Split the manifest into what `target` installs and what it only reports. The consumer
+    target installs core (scripts/, schemas/) and the contract root; the client target installs
+    skills/ and rules/. docs/reference/ is reference-only for both; any other root is malformed."""
+    if target not in TARGETS:
+        raise ValueError("unknown target %r" % (target,))
     if len(raw) > MAX_TEXT_BYTES:
         raise FormatError("MANIFEST_MALFORMED", "the manifest is larger than %d bytes" % MAX_TEXT_BYTES)
     try:
@@ -178,13 +195,21 @@ def parse_manifest(raw: bytes) -> Manifest:
         if problem:
             raise FormatError("MANIFEST_MALFORMED", "line %d: %s" % (number, problem))
         seen.append(line)
-        top = line.split("/", 1)[0]
+        is_consumer = _in_roots(line, INSTALL_ROOTS) or line.startswith(CONTRACT_PREFIX)
+        is_client = _in_roots(line, CLIENT_ROOTS)
         if line.startswith(REFERENCE_PREFIX):
             skipped.append((line, "reference document: consulted in place, not copied"))
-        elif top in GLOBAL_ROOTS and "/" in line:
-            skipped.append((line, "client configuration under ~/.claude: out of scope, never touched"))
-        elif top in INSTALL_ROOTS and "/" in line:
-            install.append(line)
+        elif is_consumer:
+            if target == TARGET_CONSUMER:
+                install.append(line)
+            else:
+                skipped.append((line, "consumer file: installed only by the consumer target, not by the client target"))
+        elif is_client:
+            if target == TARGET_CLIENT:
+                install.append(line)
+            else:
+                skipped.append((line, "client file: installed only by the explicit client target "
+                                "(--target client --root DIR), never by a consumer run"))
         else:
             raise FormatError("MANIFEST_MALFORMED",
                               "line %d: no destination mapping for %s" % (number, line))
@@ -214,17 +239,36 @@ class Receipt:
     repository: str
     commit: str
     files: Dict[str, ReceiptFile]
+    schema_version: int = RECEIPT_SCHEMA_VERSION  # as read; the writer picks the lowest that fits
+    tool_version: Optional[str] = None  # the writer recorded in the file as read
 
 
 _RECEIPT_KEYS = {"schema_version", "tool", "tool_version", "state", "repository", "commit", "files"}
 _RECEIPT_FILE_KEYS = {"path", "sha256", "git_blob", "mode"}
 
 
-def parse_receipt(raw: bytes) -> Receipt:
+def receipt_path_allowed(path: str, version: int) -> bool:
+    """Version 1 holds paths under scripts/ and schemas/ only; version 2 adds the contract root and
+    the client roots and nothing else."""
+    if _in_roots(path, INSTALL_ROOTS):
+        return True
+    return version == RECEIPT_SCHEMA_VERSION_2 and (path.startswith(CONTRACT_PREFIX) or _in_roots(path, CLIENT_ROOTS))
+
+
+def lowest_receipt_version(paths) -> int:
+    """The lowest schema version that can express these paths."""
+    return RECEIPT_SCHEMA_VERSION if all(receipt_path_allowed(p, RECEIPT_SCHEMA_VERSION) for p in paths) \
+        else RECEIPT_SCHEMA_VERSION_2
+
+
+def parse_receipt(raw: bytes, supported: Tuple[int, ...] = SUPPORTED_RECEIPT_VERSIONS) -> Receipt:
+    """`supported` is the set of schema versions this reader accepts; an older tool accepted (1,),
+    and refuses a newer receipt or journal as an unsupported schema_version."""
     data = load_json_object(raw, "RECEIPT_MALFORMED", "the install receipt")
     if set(data) != _RECEIPT_KEYS:
         raise FormatError("RECEIPT_MALFORMED", "the install receipt has missing or unknown fields")
-    if data["schema_version"] != RECEIPT_SCHEMA_VERSION or isinstance(data["schema_version"], bool):
+    version = data["schema_version"]
+    if isinstance(version, bool) or not isinstance(version, int) or version not in supported:
         raise FormatError("RECEIPT_MALFORMED", "unsupported receipt schema_version")
     if data["tool"] != TOOL_NAME or not isinstance(data["tool_version"], str) or not data["tool_version"]:
         raise FormatError("RECEIPT_MALFORMED", "the receipt was not written by this tool")
@@ -242,7 +286,7 @@ def parse_receipt(raw: bytes) -> Receipt:
         if not isinstance(item, dict) or set(item) != wanted:
             raise FormatError("RECEIPT_MALFORMED", "%s has missing or unknown fields" % where)
         problem = path_problem(item["path"])
-        if problem or item["path"].split("/", 1)[0] not in INSTALL_ROOTS:
+        if problem or not receipt_path_allowed(item["path"], version):
             raise FormatError("RECEIPT_MALFORMED", "%s: %s" % (where, problem or "not an installable path"))
         if not isinstance(item["sha256"], str) or not _SHA256_RE.match(item["sha256"]):
             raise FormatError("RECEIPT_MALFORMED", "%s: bad sha256" % where)
@@ -265,10 +309,13 @@ def parse_receipt(raw: bytes) -> Receipt:
     problem = overlap_problem(list(files))
     if problem:
         raise FormatError("RECEIPT_MALFORMED", problem)
-    return Receipt(data["state"], data["repository"], data["commit"], files)
+    return Receipt(data["state"], data["repository"], data["commit"], files, version, data["tool_version"])
 
 
-def serialize_receipt(receipt: Receipt) -> bytes:
+def serialize_receipt(receipt: Receipt, tool_version: Optional[str] = None) -> bytes:
+    """The writer emits the lowest schema version that can express the content (a consumer that needs
+    no new feature keeps a receipt that older tools can read). `tool_version` is the writer to
+    record; by default this tool."""
     files = []
     for path in sorted(receipt.files):
         entry = receipt.files[path]
@@ -279,9 +326,9 @@ def serialize_receipt(receipt: Receipt) -> bytes:
             item["previous_mode"] = entry.previous_mode
         files.append(item)
     document = {
-        "schema_version": RECEIPT_SCHEMA_VERSION,
+        "schema_version": lowest_receipt_version(receipt.files),
         "tool": TOOL_NAME,
-        "tool_version": TOOL_VERSION,
+        "tool_version": tool_version or TOOL_VERSION,
         "state": receipt.state,
         "repository": receipt.repository,
         "commit": receipt.commit,

@@ -47,11 +47,40 @@ class ReceiptContractTests(unittest.TestCase):
              "previous_sha256": "c" * 64, "previous_mode": "100755"}]),
         "no files": complete(files=[]),
         "sha256 object ids": complete(commit="d" * 64),
+        "version 2 with a core path": complete(schema_version=2),
+        "version 2 with the contract root": complete(schema_version=2, files=[
+            {"path": "docs/tooltempest/consumer-contract.md", "sha256": SHA, "git_blob": OID, "mode": "100644"}]),
+        "version 2 with client roots": complete(schema_version=2, files=[
+            {"path": "skills/spec/SKILL.md", "sha256": SHA, "git_blob": OID, "mode": "100644"},
+            {"path": "rules/drift-control.md", "sha256": SHA, "git_blob": OID, "mode": "100644"}]),
+        "version 2 journal with a client root": installing(schema_version=2, files=[
+            {"path": "skills/spec/SKILL.md", "sha256": SHA, "git_blob": OID, "mode": "100644",
+             "previous_sha256": None, "previous_mode": None}]),
     }
     REJECTED = {
         "unknown top-level field": complete(extra=1),
         "missing repository": {k: v for k, v in complete().items() if k != "repository"},
-        "schema_version 2": complete(schema_version=2),
+        "schema_version 3": complete(schema_version=3),
+        "schema_version 0": complete(schema_version=0),
+        "string schema_version": complete(schema_version="2"),
+        "version 1 with the contract root": complete(files=[
+            {"path": "docs/tooltempest/consumer-contract.md", "sha256": SHA, "git_blob": OID, "mode": "100644"}]),
+        "version 1 with a client root": complete(files=[
+            {"path": "skills/spec/SKILL.md", "sha256": SHA, "git_blob": OID, "mode": "100644"}]),
+        "version 1 journal with a client root": installing(files=[
+            {"path": "rules/drift-control.md", "sha256": SHA, "git_blob": OID, "mode": "100644",
+             "previous_sha256": None, "previous_mode": None}]),
+        "version 2 with a reference path": complete(schema_version=2, files=[
+            {"path": "docs/reference/documentation-rules.md", "sha256": SHA, "git_blob": OID,
+             "mode": "100644"}]),
+        "version 2 with another docs path": complete(schema_version=2, files=[
+            {"path": "docs/other/x.md", "sha256": SHA, "git_blob": OID, "mode": "100644"}]),
+        "version 2 with an unknown field": complete(schema_version=2, extra=1),
+        "version 2 file with an unknown field": complete(schema_version=2, files=[
+            {"path": "skills/a.md", "sha256": SHA, "git_blob": OID, "mode": "100644", "x": 1}]),
+        "version 2 previous fields outside a journal": complete(schema_version=2, files=[
+            {"path": "skills/a.md", "sha256": SHA, "git_blob": OID, "mode": "100644",
+             "previous_sha256": None, "previous_mode": None}]),
         "bad state": complete(state="done"),
         "abbreviated commit": complete(commit="abc123"),
         "uppercase commit": complete(commit="A" * 40),
@@ -121,7 +150,8 @@ class ReceiptContractTests(unittest.TestCase):
                     parse_receipt(encode(document))
 
     def test_a_receipt_round_trips_byte_for_byte(self):
-        for document in (complete(), installing()):
+        for document in (complete(), installing(), complete(schema_version=2, files=[
+                {"path": "skills/a.md", "sha256": SHA, "git_blob": OID, "mode": "100644"}])):
             receipt = parse_receipt(encode(document))
             raw = serialize_receipt(receipt)
             self.assertEqual(serialize_receipt(parse_receipt(raw)), raw)
@@ -172,6 +202,38 @@ class ManifestParsingTests(unittest.TestCase):
         manifest = parse_manifest(b"docs/reference/r.md\nrules/x.md\nschemas/s.json\nscripts/a.py\nskills/k/SKILL.md\n")
         self.assertEqual(manifest.install, ["schemas/s.json", "scripts/a.py"])
         self.assertEqual([p for p, _ in manifest.skipped], ["docs/reference/r.md", "rules/x.md", "skills/k/SKILL.md"])
+
+    MIXED = (b"docs/reference/r.md\ndocs/tooltempest/c.md\nrules/x.md\nschemas/s.json\nscripts/a.py\n"
+             b"skills/k/SKILL.md\n")
+
+    def test_the_consumer_target_installs_core_and_the_contract_and_the_client_target_installs_the_client_roots(self):
+        consumer = parse_manifest(self.MIXED)
+        self.assertEqual(consumer.install, ["docs/tooltempest/c.md", "schemas/s.json", "scripts/a.py"])
+        self.assertEqual(dict(consumer.skipped)["skills/k/SKILL.md"].split()[0], "client")
+        client = parse_manifest(self.MIXED, "client")
+        self.assertEqual(client.install, ["rules/x.md", "skills/k/SKILL.md"])
+        self.assertEqual(sorted(p for p, _ in client.skipped),
+                         ["docs/reference/r.md", "docs/tooltempest/c.md", "schemas/s.json", "scripts/a.py"])
+        self.assertTrue(all(reason for _, reason in client.skipped + consumer.skipped))
+
+    def test_reference_documents_are_installed_by_neither_target(self):
+        for target in ("consumer", "client"):
+            with self.subTest(target):
+                manifest = parse_manifest(self.MIXED, target)
+                self.assertNotIn("docs/reference/r.md", manifest.install)
+                self.assertIn("docs/reference/r.md", dict(manifest.skipped))
+
+    def test_any_other_root_is_still_malformed_for_both_targets(self):
+        for line in (b"docs/other/x.md\n", b"tests/x.py\n", b"docs/tooltempest\n", b"skills\n", b"README.md\n"):
+            for target in ("consumer", "client"):
+                with self.subTest(line=line, target=target):
+                    with self.assertRaises(FormatError) as ctx:
+                        parse_manifest(b"scripts/a.py\n" + line, target)
+                    self.assertEqual(ctx.exception.code, "MANIFEST_MALFORMED")
+
+    def test_an_unknown_target_is_a_programming_error_not_a_default(self):
+        with self.assertRaises(ValueError):
+            parse_manifest(b"scripts/a.py\n", "elsewhere")
 
     def test_blank_lines_are_ignored_but_a_manifest_of_nothing_is_not_a_manifest(self):
         self.assertEqual(parse_manifest(b"\n\nscripts/a.py\n\n").install, ["scripts/a.py"])

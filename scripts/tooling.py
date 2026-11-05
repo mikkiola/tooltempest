@@ -9,7 +9,9 @@
 `verify` and `status` are read-only and never touch the network. They report
 local integrity, upstream provenance and freshness separately. `materialize`
 is a dry run unless `--apply` is given, never overwrites a file it does not
-manage, never repins, never touches ~/.claude, and reaches the network only
+manage, never repins, writes only inside the root it was given (the consumer checkout, or the
+client root of the explicit `--target client --root DIR`; there is no default client directory),
+and reaches the network only
 with `--allow-network` and only when the pinned commit is absent locally.
 Exit codes: 0 ok, 1 findings (or refused, or applied but not verified), 2 the
 tool could not run. With `--format json` the result conforms to

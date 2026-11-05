@@ -94,7 +94,8 @@ class InstallTests(ToolingCase):
         self.assertFalse(self.consumer.exists("docs"))
         skipped = {item["path"]: item["reason"] for item in doc["skipped"]}
         self.assertEqual(sorted(skipped), ["docs/reference/rules.md", "skills/demo/SKILL.md"])
-        self.assertIn("~/.claude", skipped["skills/demo/SKILL.md"])
+        self.assertIn("client", skipped["skills/demo/SKILL.md"])
+        self.assertIn("--target client", skipped["skills/demo/SKILL.md"])
         self.assertIn("reference", skipped["docs/reference/rules.md"])
         self.assertEqual([r["path"] for r in doc["files"] if r["path"].startswith(("skills", "docs"))], [])
 

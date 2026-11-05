@@ -19,7 +19,8 @@ Exit codes (also in the result's summary.exit_code):
      without POSIX file locking (an `error` object is present; a usage error
      from argument parsing is printed on stderr only).
 
-Only `materialize --apply` writes, and only inside the consumer checkout.
+Only `materialize --apply` writes, and only inside the root it was given: the consumer checkout
+by default, or the client root of the explicit client target (`--target client --root DIR`).
 """
 from __future__ import annotations
 
@@ -30,6 +31,7 @@ import sys
 from typing import List, Optional
 
 from . import TOOL_VERSION
+from .declarations import TARGET_CLIENT, TARGET_CONSUMER, TARGETS
 from .engine import (DEFAULT_SOURCE, Options, ToolFailure, error_document, evaluate, document, run_materialize)
 from .objects import GitFailure, GitMissing, run_git
 
@@ -60,7 +62,11 @@ def _parser() -> argparse.ArgumentParser:
         cmd = sub.add_parser(name, help=text, description=text, epilog=EXIT_CODES_HELP,
                              formatter_class=argparse.RawDescriptionHelpFormatter)
         cmd.add_argument("--root", help="the consumer checkout (default: the Git top level of the "
-                         "current directory); a linked worktree works")
+                         "current directory); a linked worktree works. Required with --target client")
+        cmd.add_argument("--target", choices=TARGETS, default=TARGET_CONSUMER,
+                         help="consumer (default): scripts/, schemas/ and the contract root; client: skills/ "
+                         "and rules/, only when asked for, into an explicit --root (there is no default "
+                         "client directory)")
         cmd.add_argument("--lock", help="default: <root>/.tooltempest.lock")
         cmd.add_argument("--receipt", help="default: <root>/.tooltempest.receipt.json")
         cmd.add_argument("--source", help="a ToolTempest repository holding the pinned commit "
@@ -78,7 +84,10 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _resolve_root(value: Optional[str]) -> str:
+def _resolve_root(value: Optional[str], target: str = TARGET_CONSUMER) -> str:
+    if target == TARGET_CLIENT and not value:
+        raise ToolFailure("USAGE", "the client target needs an explicit --root DIR; there is no default "
+                          "client directory")
     if value:
         root = os.path.realpath(value)
         if not os.path.isdir(root):
@@ -99,7 +108,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     command = args.command
     opts: Optional[Options] = None
     try:
-        root = _resolve_root(args.root)
+        root = _resolve_root(args.root, args.target)
         opts = Options(
             root=root,
             lock_path=os.path.abspath(args.lock) if args.lock else os.path.join(root, ".tooltempest.lock"),
@@ -110,6 +119,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             allow_network=bool(getattr(args, "allow_network", False)),
             apply=bool(getattr(args, "apply", False)),
             invoked_as=os.path.abspath(sys.argv[0]),
+            target=args.target,
         )
         if command == "materialize":
             doc = run_materialize(opts)
@@ -175,7 +185,7 @@ def render_text(doc: dict) -> str:
             if record.get("reason"):
                 out.append("             %s" % record["reason"])
     if doc["skipped"]:
-        out.append("not installed by this tool (%d): global client files and reference documents" % len(doc["skipped"]))
+        out.append("not installed by this run (%d): files of the other target and reference documents" % len(doc["skipped"]))
     findings = [f for f in doc["findings"] if f["severity"] != "info"] or []
     infos = [f for f in doc["findings"] if f["severity"] == "info"]
     if findings or infos:

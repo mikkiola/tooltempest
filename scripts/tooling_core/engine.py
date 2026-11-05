@@ -20,11 +20,12 @@ re-verify. A crash between journal and completion leaves the journal, which
 `materialize --apply` finishes. Every write, rename and removal goes through
 directory descriptors held for the whole transaction (see fsops.py), never a path
 string; only a file or directory this run created is ever removed, and only while
-it is still what the run made. Nothing is repinned; no path outside the consumer's
-scripts/ and schemas/ is touched.
+it is still what the run made. Nothing is repinned; no path outside the root it was given
+is touched, and the client roots (skills/, rules/) are written only by the explicit client target.
 """
 from __future__ import annotations
 
+import errno
 import hashlib
 import os
 import stat
@@ -32,8 +33,8 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from . import RESULT_SCHEMA_VERSION, TOOL_NAME, TOOL_VERSION, fsops
-from .declarations import (FormatError, Lock, Manifest, Receipt, ReceiptFile, parse_lock,
-                           parse_manifest, parse_receipt, path_problem, serialize_receipt)
+from .declarations import (TARGET_CONSUMER, FormatError, Lock, Manifest, Receipt, ReceiptFile,
+                           parse_lock, parse_manifest, parse_receipt, path_problem, serialize_receipt)
 from .objects import (MODE_FILES, MODE_GITLINK, MODE_SYMLINK, MODE_TREE, GitFailure,
                       GitMissing, ObjectCorrupt, ObjectMissing, ObjectStore, TreeEntry,
                       fetch_commit, fetch_url_problem, run_git)
@@ -62,6 +63,7 @@ class Options:
     allow_network: bool = False
     apply: bool = False
     invoked_as: str = "scripts/tooling.py"
+    target: str = TARGET_CONSUMER  # "client" only when the operator asked for it, with an explicit root
 
 
 @dataclass
@@ -184,6 +186,8 @@ def _read_small_file(path: str, what: str) -> Optional[bytes]:
 
 def _command_hint(opts: Options, command: str, extra: str = "") -> str:
     parts = ["python3", opts.invoked_as, command, "--root", opts.root]
+    if opts.target != TARGET_CONSUMER:
+        parts += ["--target", opts.target]
     if opts.source != os.path.abspath(os.path.expanduser(DEFAULT_SOURCE)):
         parts += ["--source", opts.source]
     return " ".join(parts) + (" " + extra if extra else "")
@@ -309,7 +313,7 @@ def _read_manifest(ev: Evaluation) -> bool:
             ev.find("MANIFEST_MISSING", "error",
                     "MANIFEST.txt is not a regular file at the pinned commit %s" % ev.lock.commit)
             return False
-        ev.manifest = parse_manifest(ev.store.read_blob(entry.oid))
+        ev.manifest = parse_manifest(ev.store.read_blob(entry.oid), ev.opts.target)
         return True
     except FormatError as exc:
         ev.find(exc.code, "error", "MANIFEST.txt at the pinned commit: " + exc.message)
@@ -741,7 +745,10 @@ def _prepare(ev: Evaluation):
         return doc, None
     pending = [i for i in ev.items if i.action in ("create", "upgrade")]
     final = _final_receipt(ev, "complete", False)
-    receipt_changes = ev.receipt_raw != serialize_receipt(final)
+    # a receipt whose content does not change is not rewritten: compare as that file's own writer
+    # would have written it, so a newer tool version alone never rewrites an up-to-date receipt
+    written_by = ev.receipt.tool_version if ev.receipt is not None else None
+    receipt_changes = ev.receipt_raw != serialize_receipt(final, tool_version=written_by)
     if not pending and not receipt_changes:
         result["applied"] = opts.apply
         return doc, None
@@ -960,6 +967,9 @@ class _LockGuard:
             pass
 
 
+INSTALL_LOCK_NAME = ".tooltempest-install.lock"  # inside a root that is not a Git checkout
+
+
 def _acquire_lock(opts: Options) -> Optional[_LockGuard]:
     try:
         import fcntl
@@ -967,13 +977,34 @@ def _acquire_lock(opts: Options) -> Optional[_LockGuard]:
         raise ToolFailure("UNSUPPORTED_PLATFORM", "materialize --apply needs POSIX file locking")
     try:
         git_dir = run_git(["rev-parse", "--absolute-git-dir"], cwd=opts.root).stdout
-    except GitFailure as exc:
-        raise ToolFailure("NOT_A_REPOSITORY", "%s is not a Git checkout: %s" % (opts.root, exc))
-    path = os.path.join(git_dir.decode("utf-8", "surrogateescape").strip(), "tooltempest-install.lock")
+    except GitFailure:
+        git_dir = None  # a root outside Git (the client root, for example) keeps its lock inside itself
+    if git_dir is not None:
+        path = os.path.join(git_dir.decode("utf-8", "surrogateescape").strip(), "tooltempest-install.lock")
+        flags = os.O_RDWR | os.O_CREAT  # the in-repository lock is not changed here (ADR-0017, follow-up)
+    else:
+        path = os.path.join(opts.root, INSTALL_LOCK_NAME)
+        if not hasattr(os, "O_NOFOLLOW"):
+            raise ToolFailure("UNSUPPORTED_PLATFORM", "materialize --apply outside Git needs O_NOFOLLOW")
+        flags = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW  # created if absent, never through a link
     try:
-        fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+        fd = os.open(path, flags, 0o600)
     except OSError as exc:
+        if git_dir is not None:
+            raise ToolFailure("IO_ERROR", "cannot open the install lock %s: %s" % (path, exc.strerror))
+        if exc.errno in (errno.ELOOP, errno.EISDIR, errno.EMLINK):
+            raise ToolFailure("INSTALL_LOCK_UNSAFE", "the install lock path %s is a symlink or not a regular "
+                              "file; nothing was written" % path)
         raise ToolFailure("IO_ERROR", "cannot open the install lock %s: %s" % (path, exc.strerror))
+    if git_dir is None:
+        try:
+            regular = stat.S_ISREG(os.fstat(fd).st_mode)
+        except OSError:
+            regular = False
+        if not regular:
+            os.close(fd)
+            raise ToolFailure("INSTALL_LOCK_UNSAFE", "the install lock path %s is not a regular file; "
+                              "nothing was written" % path)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:

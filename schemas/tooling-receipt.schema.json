@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mikkiola/tooltempest/schemas/tooling-receipt.schema.json",
   "title": "ToolTempest install receipt",
-  "description": "Written only by `tooling.py materialize --apply`, by default as .tooltempest.receipt.json next to the lock. Records the exact source commit and every installed path with its sha256, Git blob id and mode. `state` is `complete` normally; `installing` marks a journal written before the first file is replaced, so an interrupted installation is reported as recovery-required and a repeated `materialize --apply` finishes it. In a journal `previous_sha256` and `previous_mode` are the hash and executable mode a managed file may still legitimately have (both null for a file that did not exist; the parser rejects one without the other). Receipt paths are repository-relative, inside scripts/ or schemas/ only. See ADR-0015.",
+  "description": "Written only by `tooling.py materialize --apply`, by default as .tooltempest.receipt.json next to the lock (in the client root for the client target). Records the exact source commit and every installed path with its sha256, Git blob id and mode. `state` is `complete` normally; `installing` marks a journal written before the first file is replaced, so an interrupted installation is reported as recovery-required and a repeated `materialize --apply` finishes it. In a journal `previous_sha256` and `previous_mode` are the hash and executable mode a managed file may still legitimately have (both null for a file that did not exist; the parser rejects one without the other). `schema_version` 1 holds paths inside scripts/ or schemas/ only; `schema_version` 2 adds the contract root docs/tooltempest/ and the client roots skills/ and rules/ and adds nothing else. The writer emits the lowest version that can express the content; the reader accepts both. See ADR-0015 and ADR-0017.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -16,7 +16,10 @@
   ],
   "properties": {
     "schema_version": {
-      "const": 1
+      "enum": [
+        1,
+        2
+      ]
     },
     "tool": {
       "const": "tooltempest-tooling"
@@ -61,6 +64,33 @@
       }
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "schema_version": {
+            "const": 1
+          }
+        },
+        "required": [
+          "schema_version"
+        ]
+      },
+      "then": {
+        "properties": {
+          "files": {
+            "items": {
+              "properties": {
+                "path": {
+                  "pattern": "^(scripts|schemas)/.+"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "oid": {
       "type": "string",
@@ -82,8 +112,8 @@
       "properties": {
         "path": {
           "type": "string",
-          "pattern": "^(scripts|schemas)/.+",
-          "description": "Repository-relative POSIX path; no empty, '.', '..' or .git components, no backslashes, no control characters, no duplicates or case/Unicode collisions (enforced by the tool)."
+          "pattern": "^(scripts|schemas|docs/tooltempest|skills|rules)/.+",
+          "description": "Repository-relative POSIX path under a root the version allows; no empty, '.', '..' or .git components, no backslashes, no control characters, no duplicates or case/Unicode collisions (enforced by the tool)."
         },
         "sha256": {
           "$ref": "#/$defs/sha256"
@@ -113,7 +143,7 @@
       "properties": {
         "path": {
           "type": "string",
-          "pattern": "^(scripts|schemas)/.+"
+          "pattern": "^(scripts|schemas|docs/tooltempest|skills|rules)/.+"
         },
         "sha256": {
           "$ref": "#/$defs/sha256"

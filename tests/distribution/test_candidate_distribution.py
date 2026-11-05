@@ -21,7 +21,7 @@ import unittest
 from dist_helpers import (COMPOSITION_DIRS, REPO_ROOT, TempDirCase, candidate_commit, clean_env,
                           git_out, run_python, validate)
 
-INSTALL_ROOTS = ("scripts/", "schemas/")
+INSTALL_ROOTS = ("scripts/", "schemas/", "docs/tooltempest/")  # the consumer target
 RESULT_SCHEMA = REPO_ROOT / "schemas" / "tooling-result.schema.json"
 RECEIPT_SCHEMA = REPO_ROOT / "schemas" / "tooling-receipt.schema.json"
 TOOLING = REPO_ROOT / "scripts" / "tooling.py"
@@ -125,8 +125,9 @@ class MaterializeCandidateTests(MaterializedCase):
             self.assertTrue(entry["reason"], entry)
         for rel in CANDIDATE.skipped:
             self.assertFalse((self.consumer / rel).exists(), rel)
-        for top in ("skills", "rules", "docs"):
+        for top in ("skills", "rules"):
             self.assertFalse((self.consumer / top).exists(), top)
+        self.assertFalse((self.consumer / "docs" / "reference").exists())
 
     def test_the_receipt_records_the_commit_the_paths_the_hashes_the_blobs_and_the_modes(self):
         self.materialize()
@@ -165,6 +166,67 @@ class MaterializeCandidateTests(MaterializedCase):
         doc = self.materialize()
         self.assertEqual(doc["network"], {"allowed": False, "used": False})
         self.assertEqual(sorted(os.listdir(self.home)), before_home)
+
+
+class ClientTargetCandidateTests(TempDirCase):
+    """The explicit client target installs exactly the candidate's skills/ and rules/ entries, into a
+    throwaway root that is not a Git checkout, and nothing of core or the contract."""
+
+    CLIENT_ROOTS = ("skills/", "rules/")
+
+    def setUp(self):
+        self.home = self.tempdir()
+        self.root = self.tempdir() / "client-root"
+        self.root.mkdir()
+        (self.root / ".tooltempest.lock").write_text(json.dumps({
+            "repository": "https://tooltempest.invalid/tooltempest.git", "commit": CANDIDATE.commit}, indent=2) + "\n")
+        self.client_files = sorted(p for p in CANDIDATE.manifest if p.startswith(self.CLIENT_ROOTS))
+
+    def tooling(self, *args):
+        proc = subprocess.run([sys.executable, "-I", str(TOOLING), *args, "--target", "client", "--root", str(self.root),
+                               "--source", str(REPO_ROOT), "--format", "json"],
+                              capture_output=True, env=clean_env({"HOME": str(self.home)}), check=False,
+                              stdin=subprocess.DEVNULL)
+        doc = json.loads(proc.stdout.decode("utf-8"))
+        self.assertEqual(proc.returncode, doc["summary"]["exit_code"])
+        self.assertEqual(validate(doc, load(RESULT_SCHEMA)), [])
+        return proc.returncode, doc
+
+    def test_the_candidate_has_client_files(self):
+        self.assertTrue(self.client_files)
+
+    def test_the_client_target_installs_exactly_the_client_entries_with_their_bytes_and_modes(self):
+        code, doc = self.tooling("materialize", "--apply")
+        self.assertEqual(code, 0, doc["findings"])
+        self.assertEqual(sorted(doc["result"]["written"]), self.client_files)
+        found = sorted(os.path.relpath(os.path.join(b, n), self.root) for b, d, files in os.walk(self.root)
+                       for n in files)
+        self.assertEqual(found, sorted(self.client_files + [".tooltempest-install.lock", ".tooltempest.lock",
+                                                           ".tooltempest.receipt.json"]))
+        for rel in self.client_files:
+            with self.subTest(rel):
+                self.assertEqual((self.root / rel).read_bytes(), CANDIDATE.bytes_of(rel))
+                self.assertEqual(bool((self.root / rel).stat().st_mode & stat.S_IXUSR),
+                                 CANDIDATE.blobs[rel][0] == "100755")
+        receipt = load(self.root / ".tooltempest.receipt.json")
+        self.assertEqual(validate(receipt, load(RECEIPT_SCHEMA)), [])
+        self.assertEqual((receipt["schema_version"], receipt["commit"]), (2, CANDIDATE.commit))
+
+    def test_verify_confirms_it_and_a_second_apply_changes_nothing(self):
+        self.tooling("materialize", "--apply")
+        code, doc = self.tooling("verify")
+        self.assertEqual(code, 0, doc["findings"])
+        self.assertEqual((doc["summary"]["local_integrity"], doc["summary"]["upstream_provenance"]), ("ok", "ok"))
+        code, again = self.tooling("materialize", "--apply")
+        self.assertEqual((code, again["result"]["written"]), (0, []))
+
+    def test_the_client_target_installs_nothing_of_core_the_contract_or_the_reference_docs(self):
+        code, doc = self.tooling("materialize", "--apply")
+        self.assertEqual(code, 0, doc["findings"])
+        for rel in CANDIDATE.manifest:
+            if rel.startswith(("scripts/", "schemas/", "docs/")):
+                self.assertFalse((self.root / rel).exists(), rel)
+        self.assertEqual(sorted(os.listdir(self.home)), [], "nothing is written under HOME")
 
 
 class MaterializedCopyRunsTests(MaterializedCase):

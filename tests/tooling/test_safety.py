@@ -1,6 +1,6 @@
 """Malformed manifests, path traversal, symlink and ancestor escape, unsupported
 source types: each is refused before any destination is written, with the
-reason named, and nothing outside the consumer checkout is ever touched.
+reason named, and nothing outside the root the run was given is ever touched.
 """
 import os
 from unittest import mock

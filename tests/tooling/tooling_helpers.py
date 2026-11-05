@@ -3,7 +3,9 @@
 Everything runs against throwaway repositories under the system temp
 directory with an isolated Git environment and a throwaway HOME. No test
 touches this repository's index or refs, a real consumer checkout, the
-network, or ~/.claude. A fixture "ToolTempest" (Upstream) is a real Git
+network, or the real ~/.claude: a guard in this module (an audit hook) fails
+the run if this process writes under it, and refuses to start the tool with
+the real HOME. The client target is exercised only with a throwaway root. A fixture "ToolTempest" (Upstream) is a real Git
 repository; a fixture consumer is another one; "network" in these tests is
 only ever a local file:// repository.
 """
@@ -13,6 +15,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import pwd
 import shutil
 import stat
 import subprocess
@@ -42,6 +45,49 @@ GitFixture = docops_helpers.GitFixture
 clean_env = docops_helpers.clean_env
 tree_digest = docops_helpers.tree_digest
 validate = docops_helpers.validate
+
+REAL_HOME = os.path.abspath(pwd.getpwuid(os.getuid()).pw_dir)
+REAL_CLAUDE_DIR = os.path.join(REAL_HOME, ".claude")
+
+
+class RealClaudeTouched(AssertionError):
+    """A test tried to write under the real ~/.claude, or to run the tool with the real HOME."""
+
+
+_WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_APPEND | os.O_TRUNC
+_PATH_EVENTS = ("os.mkdir", "os.remove", "os.rmdir", "os.rename", "os.symlink", "os.link", "os.truncate",
+                "os.chmod", "os.utime", "shutil.copyfile")
+
+
+def _under_real_claude(value):
+    if isinstance(value, bytes):
+        value = os.fsdecode(value)
+    if not isinstance(value, str):
+        return False
+    path = os.path.abspath(value)
+    return path == REAL_CLAUDE_DIR or path.startswith(REAL_CLAUDE_DIR + os.sep)
+
+
+def _claude_guard(event, args):
+    if event == "open":
+        path, _mode, flags = args
+        if flags is not None and flags & _WRITE_FLAGS and _under_real_claude(path):
+            raise RealClaudeTouched("write-open of %s" % path)
+    elif event in _PATH_EVENTS:
+        for value in args:
+            if _under_real_claude(value):
+                raise RealClaudeTouched("%s of %s" % (event, value))
+
+
+if not getattr(sys, "_tooltempest_claude_guard", False):
+    sys._tooltempest_claude_guard = True
+    sys.addaudithook(_claude_guard)
+
+
+def assert_isolated_home(home):
+    if home is not None and os.path.abspath(home) == REAL_HOME:
+        raise RealClaudeTouched("the tool must not run with the real HOME")
+
 
 UNREACHABLE_URL = "https://tooltempest.invalid/tooltempest.git"
 NO_REF = "refs/remotes/origin/none"
@@ -83,7 +129,8 @@ class Upstream:
             self.fx.git("update-index", "--chmod=-x", "--", path)
         if manifest is None:
             listed = sorted(p for p in self.files if p.split("/", 1)[0] in
-                            ("scripts", "schemas", "skills", "rules") or p.startswith("docs/reference/"))
+                            ("scripts", "schemas", "skills", "rules")
+                            or p.startswith(("docs/reference/", "docs/tooltempest/")))
             manifest = "\n".join(listed) + "\n"
         self.fx.stage("MANIFEST.txt", manifest)
         return self.fx.commit(message)
@@ -156,6 +203,7 @@ def tool_env(home, extra=None):
 
 
 def run_tooling(args, home, cwd=None, env=None, umask=None):
+    assert_isolated_home((env or {}).get("HOME", home))
     preexec = (lambda: os.umask(umask)) if umask is not None else None
     proc = subprocess.run([sys.executable, "-I", str(TOOLING_PY), *args], cwd=cwd,
                           capture_output=True, env=env or tool_env(home), check=False,
