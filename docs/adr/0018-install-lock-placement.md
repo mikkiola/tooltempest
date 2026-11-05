@@ -1,6 +1,6 @@
 # ADR-0018: Install-Lock Placement for Roots That Are Not Their Own Work Tree
 
-Status: Proposed, 2026-11-05.
+Status: Accepted, 2026-11-05.
 
 ## Context & Constraints
 
