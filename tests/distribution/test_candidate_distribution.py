@@ -287,7 +287,7 @@ class IncompleteManifestTests(MaterializedCase):
     FORGOTTEN = "scripts/docops_core/specparse.py"
 
     def make_damaged_copy(self):
-        archive = git_out("archive", "--format=tar", CANDIDATE.commit, "--", "scripts", "schemas", "MANIFEST.txt")
+        archive = git_out("archive", "--format=tar", CANDIDATE.commit, "--", "scripts", "schemas", "docs/tooltempest", "MANIFEST.txt")
         copy = self.tempdir() / "damaged"
         copy.mkdir()
         with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
