@@ -5,6 +5,11 @@ primitives: `/spec`, `/verify`, `drift-control`, and (as of V2) the
 DocOps Protocol (`doc_sync`). This repository holds only the primitives
 themselves — no client-specific integration code lives here.
 
+The rules for documents and process are in
+[`docs/tooltempest/universal-rules.md`](docs/tooltempest/universal-rules.md).
+They are binding here and in every consumer. Start with its section "How every
+repository works".
+
 ## What this is
 
 ToolTempest exists to give these primitives one canonical home,
@@ -142,9 +147,10 @@ and ADR-0017 it lists every tracked file under `scripts/`, `schemas/`,
 `skills/`, `rules/`, `docs/reference/` and `docs/tooltempest/`, so besides those
 seven it also holds the reference document below, the consumer contract
 `docs/tooltempest/consumer-contract.md` (the text of the consumer obligation,
-its single source), the manifest validator `scripts/check_manifest.py` (a
-maintainer tool), the DocOps checker files and the tooling bootstrap files
-above.
+its single source), the universal rules `docs/tooltempest/universal-rules.md`
+(the second file of the contract root), the manifest validator
+`scripts/check_manifest.py` (a maintainer tool), the DocOps checker files and
+the tooling bootstrap files above.
 
 ## Reference documentation (added by ADR-0008)
 
@@ -157,10 +163,9 @@ A consuming project either points to the pinned copy in this
 repository, or vendors its own copy into its own repo; either way the
 document is consulted in place, not installed as a rule.
 
-- `docs/reference/documentation-rules.md` — structural and
-  style rules for `CONSTITUTION.md`/`ARCHITECTURE.md`/`ROADMAP.md`/
-  `BACKLOG.md`/`docs/adr/`, intended to apply across every project in
-  this ecosystem (article-pipeline, tooltempest, Radar, future Brain).
+- `docs/reference/documentation-rules.md` — a pointer to
+  `docs/tooltempest/universal-rules.md`, which now holds the rules this
+  document stated. The path stays so that links to it resolve.
 
 See `docs/adr/0008-reference-documentation-category.md` for why this
 category exists as distinct from `rules/`.
@@ -277,7 +282,8 @@ consumer. This restates "Usage today" above as a linear sequence; for
 2. **Initial install.** Run `python3 scripts/tooling.py materialize --apply`
    from a checkout of this repository that holds the pinned SHA (or with
    `--source`), in the consuming project: it installs `scripts/`, `schemas/`
-   and the contract file `docs/tooltempest/consumer-contract.md` from the pin
+   and the contract root files (`docs/tooltempest/consumer-contract.md` and
+   `docs/tooltempest/universal-rules.md`) from the pin
    and writes a receipt. A consuming project needs no installer of its own.
 3. **Activate the git hooks.** Again following article-pipeline's
    pattern (`scripts/install-hooks.sh`, also not part of this
