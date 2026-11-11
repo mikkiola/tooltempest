@@ -65,7 +65,8 @@ precedence over any of them.
 
 | Rule | Change it with |
 |---|---|
-| Universal rule | An Accepted ADR in `mikkiola/tooltempest`, and the edit to this file in the same change. |
+| Universal rule: an edit that is a significant, hard-to-reverse architectural decision, or that changes a shared contract | An Accepted ADR in `mikkiola/tooltempest`, and the edit to this file in the same change. |
+| Universal rule: any other edit | The edit goes directly into this file. Before you finish, run the check of the rule's owner and its direct consumers ("Documentation maintenance"). The commit message states what changed. |
 | Project rule | A Constitution amendment: an Accepted ADR in that repository, and the edit to `docs/CONSTITUTION.md` in the same change. |
 
 - A consumer receives a changed universal rule through an explicit repin. This
@@ -131,6 +132,7 @@ word is a MUST.
 | TX-4 | A fact MUST live in one place. Other places link to it. |
 | TX-5 | An obligation MUST use a key word. |
 | TX-6 | A rule states the obligation and its condition. Use the shortest text that keeps the meaning. A document MUST NOT carry history, motivation, or a repeated fact; Git and the ADRs hold them. The ADR sections of DR-7 and the `Found` and `Source` lines of BL-3 are the exceptions. |
+| TX-7 | The reader and user of every tool, document, and repository artifact is an AI agent. The design criterion is that an agent finds the artifact, reads it without ambiguity, and acts correctly. Readability for a human is not a criterion. This rule does not authorize deleting, rewriting, or converting an existing artifact. Conversation with the Owner is in Russian (LG-2). |
 
 ## Decision records
 
@@ -177,6 +179,11 @@ word is a MUST.
 | WR-12 | A task for Claude Code MUST state its scope (specific files or paths, not only a topic), what is out of scope, what must not be touched, and the exact report format. A read-only task MUST be labelled read-only; on ambiguity it stops and reports and does not guess. The result is command output or the task's final report. No permanent file or planning layer is required unless the existing workflow requires one. |
 | WR-13 | The task prompt is the approval. A task for Claude Code states its scope (WR-12). Inside that scope, write, edit, delete, and move files, and make a local commit, without a per-action question. Before a commit, check the full diff and run the prescribed checks. A commit with MEDIUM or LOW findings is allowed when the report lists them: a local commit saves state and does not mean readiness. A BLOCKER or HIGH finding blocks a commit (RV-7), and a review gate that the Owner requires before a commit still applies. A blocking hook still blocks; never bypass a hook. Outside the scope, stop and ask one question (WR-2). These actions always need an explicit question: token revocation, deleting a file that another process may depend on (WR-7), and any edit of a Constitution ("How a rule changes"). Deleting an ADR file follows DR-13. An edit of `.tooltempest.lock` follows the consumer contract: a task prompt that names a repin authorizes it under the conditions stated there, and the contract names the cases that need a question. Put a question in this form: `[ЗАПРОС] Действие: X. Путь: Y. Подтвердить? (Y/n)`. |
 | WR-14 | Any `git push` needs a separate explicit permission of the Owner. Ask only after the mandatory checks pass. Write the request in Russian and state what exactly will be published, which checks passed, and which risks remain. If a mandatory check fails or the evidence is insufficient, push is forbidden and you do not ask. The permission covers only the change set that you showed; a changed set needs a new permission. The permission authorizes publication; it does not confirm technical correctness. |
+| WR-15 | Neighboring repositories are separate systems. Workspace proximity authorizes no cross-repository integration, and no repository is an implicit input or target of another. Integrate only through an established data contract. |
+| WR-16 | To verify an instruction-only change, check the links, the scope, the exact diff, and `git diff --check`. You MUST NOT run a production entry point, dispatch a workflow, or call a live external service to validate instruction text. |
+| WR-17 | An instruction-only task MUST NOT change settings, permissions, hooks, or MCP configuration. |
+| WR-18 | Reuse the installed shared skills. You MUST NOT copy a skill's procedure into a project agent, or add a second skill for the same procedure. |
+| WR-19 | A secret (a key, token, credential, or password) MUST NOT appear in a tracked file, a log, a commit message, or a publication. |
 
 ## Review and verification
 
@@ -189,6 +196,29 @@ word is a MUST.
 | RV-5 | Evidence stays valid until a later change touches what it covers. Re-check only that part. |
 | RV-6 | After you migrate or rewrite a document, verify and report, as a separate step: re-read the original and confirm that every fact, decision, obligation, and open question has a home; the document follows its format in this file; no two documents contradict each other. |
 | RV-7 | A review finding is HIGH only when you can state this chain: (1) the concrete defect; (2) who or what relies on it; (3) the specific wrong action that an agent or a consumer takes because of it, and the cost of that action. Qualifying actions: a push without the Owner's permission, a bypass of a review gate or a hook, the deletion of a file that another process depends on, a secret exposure, a consumer breakage, and the loss of an obligation that has a mechanism or an incident cost and has no other record. A false statement, a contradiction between documents, or a wrong cross-reference without that chain is MEDIUM. A BLOCKER or HIGH finding blocks a commit. MEDIUM and LOW findings never block a commit; list them in the report. After a HIGH fix, a re-review covers only the changed lines. A change that fixes only MEDIUM or LOW findings needs no re-review. The budget is two review passes per repository and per task; when the second pass still returns a BLOCKER or HIGH finding, stop, report, and do not commit. |
+| RV-8 | The review severity levels are BLOCKER, HIGH, MEDIUM, and LOW. A BLOCKER or HIGH finding blocks a commit; a MEDIUM or LOW finding never does (RV-7). HIGH needs the chain of RV-7. A finding that is neither BLOCKER nor HIGH is MEDIUM or LOW, and both are advisory. A reviewer template MUST reference this rule and MUST NOT define the levels a second time. |
+
+## Documentation maintenance
+
+These rules apply when you create or change a document or an instruction.
+
+- Read the sources that the task touches, and no others beyond the session-start reading order.
+- Update the existing authoritative document before you create a new one.
+- A rule has one owner. Refer to it by its Rule ID, or by file and section when it has no ID. You MUST NOT create a new ID or a registry of rules.
+- A new or changed mandatory instruction states who acts, the trigger, the required or prohibited action, whose permission is required, the scope and conditions, and the exceptions. State a field only where it applies.
+- Before you finish, check the change against the rule's owner and its direct consumers. Fix every defect that the change itself introduces.
+- Report an inconsistency that was there before your change and lies outside its scope. Start no repair cycle for it.
+- You MUST NOT change an Owner goal, an Owner priority, or an Owner-managed status.
+- An ADR is also required for a significant decision that is hard to reverse, and for a change to a shared contract, in addition to the triggers of DR-10 and "How a rule changes". Touching several repositories does not by itself need an ADR.
+- An independent review is mandatory only for a change of authority, a hook, security, an external contract, or a critical cross-repository interface. This sets the universal minimum. It does not reduce a review that the Owner or the workspace requires (WR-13).
+
+| Document | Update trigger |
+|---|---|
+| `docs/BACKLOG.md` | BL-3 for the entry fields; WR-4 for a stale ordinary fact; WR-5 for closure |
+| `CURRENT_MISSION.md` | MC-4 and MC-5 |
+| `docs/ARCHITECTURE.md` | WR-4 and AR-7 |
+| `docs/CONSTITUTION.md` and other operational rules | "How a rule changes" |
+| `docs/adr/` | DR-10 and the ADR bullet above |
 
 ## Mission card
 

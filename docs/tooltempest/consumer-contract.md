@@ -14,6 +14,8 @@ repins implicitly. It does not forbid an explicit repin by an agent,
 which is allowed when the evidence shows no behavior change for the
 consumer (the paragraph below).
 
+A change to ToolTempest source does not repin, install, or activate anything for a consumer.
+
 Updating a consumer's pin (a repin) is a routine step within a task. A task
 prompt that names a repin authorizes the change of `.tooltempest.lock` and the
 local commit of that change (the Owner's decisions of 2026-10-30 and
