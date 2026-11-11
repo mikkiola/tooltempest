@@ -72,6 +72,7 @@ precedence over any of them.
 - A consumer receives a changed universal rule through an explicit repin. This
   file belongs to the contract component. The consumer contract states what the
   repin needs.
+- The shared contract is the interface between ToolTempest and its consumers: `docs/tooltempest/consumer-contract.md` and the formats that consumers depend on (the lock file, the receipt, and the plan document that `scripts/tooling.py materialize` prints). It is the part of the contract component that consumers depend on. The content of this file is not the shared contract. An edit of a universal rule is an ordinary edit unless it is a significant, hard-to-reverse decision, or it also changes the shared contract.
 - A rule changes rarely and deliberately. You MUST NOT change a rule as a side effect of other work.
 - Session-end automation MUST NOT edit `docs/CONSTITUTION.md`.
 
@@ -179,11 +180,9 @@ word is a MUST.
 | WR-12 | A task for Claude Code MUST state its scope (specific files or paths, not only a topic), what is out of scope, what must not be touched, and the exact report format. A read-only task MUST be labelled read-only; on ambiguity it stops and reports and does not guess. The result is command output or the task's final report. No permanent file or planning layer is required unless the existing workflow requires one. |
 | WR-13 | The task prompt is the approval. A task for Claude Code states its scope (WR-12). Inside that scope, write, edit, delete, and move files, and make a local commit, without a per-action question. Before a commit, check the full diff and run the prescribed checks. A commit with MEDIUM or LOW findings is allowed when the report lists them: a local commit saves state and does not mean readiness. A BLOCKER or HIGH finding blocks a commit (RV-7), and a review gate that the Owner requires before a commit still applies. A blocking hook still blocks; never bypass a hook. Outside the scope, stop and ask one question (WR-2). These actions always need an explicit question: token revocation, deleting a file that another process may depend on (WR-7), and any edit of a Constitution ("How a rule changes"). Deleting an ADR file follows DR-13. An edit of `.tooltempest.lock` follows the consumer contract: a task prompt that names a repin authorizes it under the conditions stated there, and the contract names the cases that need a question. Put a question in this form: `[ЗАПРОС] Действие: X. Путь: Y. Подтвердить? (Y/n)`. |
 | WR-14 | Any `git push` needs a separate explicit permission of the Owner. Ask only after the mandatory checks pass. Write the request in Russian and state what exactly will be published, which checks passed, and which risks remain. If a mandatory check fails or the evidence is insufficient, push is forbidden and you do not ask. The permission covers only the change set that you showed; a changed set needs a new permission. The permission authorizes publication; it does not confirm technical correctness. |
-| WR-15 | Neighboring repositories are separate systems. Workspace proximity authorizes no cross-repository integration, and no repository is an implicit input or target of another. Integrate only through an established data contract. |
 | WR-16 | To verify an instruction-only change, check the links, the scope, the exact diff, and `git diff --check`. You MUST NOT run a production entry point, dispatch a workflow, or call a live external service to validate instruction text. |
 | WR-17 | An instruction-only task MUST NOT change settings, permissions, hooks, or MCP configuration. |
 | WR-18 | Reuse the installed shared skills. You MUST NOT copy a skill's procedure into a project agent, or add a second skill for the same procedure. |
-| WR-19 | A secret (a key, token, credential, or password) MUST NOT appear in a tracked file, a log, a commit message, or a publication. |
 
 ## Review and verification
 
