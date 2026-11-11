@@ -12,19 +12,15 @@ Standalone by design, per ADR-0006: runnable by a developer locally or
 as this repository's own local pre-commit hook, with no dependency on
 ADR-0005's CI existing.
 
-scripts/ has no __init__.py, so it is not an importable package --
-this module adds its own directory to sys.path before importing from
-doc_sync, rather than relying on a relative import, so it works
-regardless of the caller's working directory.
+It has no dependency on any other script of this repository: it finds the
+repository root with `git rev-parse --show-toplevel`, so it works regardless
+of the caller's working directory.
 """
 from __future__ import annotations
 
 import subprocess
 import sys
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from doc_sync import repo_root  # noqa: E402
 
 # The six Composition directories: the four from ADR-0006 ("every
 # git-tracked file under scripts/, schemas/, skills/, rules/"), docs/reference/,
@@ -33,6 +29,14 @@ from doc_sync import repo_root  # noqa: E402
 COMPOSITION_DIRS = ("scripts/", "schemas/", "skills/", "rules/", "docs/reference/", "docs/tooltempest/")
 
 MANIFEST_NAME = "MANIFEST.txt"
+
+
+def repo_root() -> Path:
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        capture_output=True, text=True, check=True,
+    )
+    return Path(result.stdout.strip()).resolve()
 
 
 def tracked_files(root: Path) -> set[str]:

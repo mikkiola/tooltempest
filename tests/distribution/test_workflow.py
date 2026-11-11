@@ -48,11 +48,6 @@ class WorkflowTextTests(unittest.TestCase):
         self.assertEqual(set(re.findall(r"python-version: '([\d.]+)'", self.text)), {"3.14"})
         self.assertIn("permissions:\n  contents: read\n", self.text)
 
-    def test_the_scenario_suite_workflow_of_adr_0005_is_untouched_in_its_trigger(self):
-        old = (REPO_ROOT / ".github" / "workflows" / "docops-scenario-suite.yml").read_text(encoding="utf-8")
-        self.assertIn("on:\n  pull_request:\n    branches: [main]\n", old)
-        self.assertNotIn("push:", old)
-
 
 if __name__ == "__main__":
     unittest.main()

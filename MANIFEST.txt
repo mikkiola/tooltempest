@@ -5,12 +5,9 @@ rules/drift-control.md
 schemas/docops-impact-report.schema.json
 schemas/docops-policy.schema.json
 schemas/docops-result.schema.json
-schemas/execution-record.schema.json
 schemas/tooling-receipt.schema.json
 schemas/tooling-result.schema.json
 scripts/check_manifest.py
-scripts/doc_sync.py
-scripts/doc_sync_tier2.py
 scripts/docops.py
 scripts/docops_core/__init__.py
 scripts/docops_core/checks.py

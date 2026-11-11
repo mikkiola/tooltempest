@@ -2,7 +2,7 @@
 
 Client-agnostic canonical source for a small set of shared tooling
 primitives: `/spec`, `/verify`, `drift-control`, and (as of V2) the
-DocOps Protocol (`doc_sync`). This repository holds only the primitives
+`doc-sync` skill of the DocOps Protocol. This repository holds only the primitives
 themselves — no client-specific integration code lives here.
 
 The rules for documents and process are in
@@ -19,7 +19,7 @@ previously kept as local, client-specific configuration.
 
 ## Composition (V2)
 
-Seven mechanism files, across two kinds of content:
+Four mechanism files, all markdown:
 
 Markdown primitives (V1, unchanged):
 - `skills/spec/SKILL.md`
@@ -27,31 +27,26 @@ Markdown primitives (V1, unchanged):
 - `rules/drift-control.md`
 
 DocOps Protocol (V2, added by ADR-0001 — `docs/adr/0001-docops-protocol.md`):
-- `scripts/doc_sync.py`
-- `scripts/doc_sync_tier2.py`
-- `schemas/execution-record.schema.json`
 - `skills/doc-sync/SKILL.md`
 
-**This is a real change in kind, not just in count.** V1 was exclusively
-markdown — passive instructional text a client interprets on its own
-terms, by reading it. `scripts/doc_sync.py` is the first executable
-code in ToolTempest: a Python script meant to be invoked directly from
-a consuming project's git hooks, carrying its own runtime logic
-(structural reconciliation, snapshot-before-modify, exit codes, a JSON
-Schema for its own audit record). Composition (V2) now includes
-executable tooling, not only markdown-based primitives. Consuming this
-repository now means, for a project that opts in, executing pinned code
-via git hooks — not only copying instructional text into a client's
-config directory. See `docs/adr/0001-docops-protocol.md` for the full
-protocol contract and the scope-boundary reasoning for why this addition
-does not compromise client independence (below).
+The mechanism files are passive instructional text a client interprets on its
+own terms, by reading it. The executable code in this repository, the DocOps
+checker and the tooling bootstrap below, is source that a consumer pins and
+runs itself; it is listed in `MANIFEST.txt` but is not one of the four files.
+The V2 hook entry points of ADR-0001 and ADR-0002 (`scripts/doc_sync.py`,
+`scripts/doc_sync_tier2.py`) and their audit-record schema were retired and are
+no longer shipped; the two ADRs stay as the record of what they were.
+Consuming the checker means executing pinned code via git hooks the consumer
+wires itself, not only copying instructional text into a client's config
+directory.
 
 DocOps checker (added by ADR-0013 — `docs/adr/0013-docops-checker-spec-state-marker.md` —
 and extended by ADR-0014 — `docs/adr/0014-docops-impact-report-validator.md`).
 It is source only: tracked and listed in `MANIFEST.txt`, but not part of the
-seven-file Composition (V2) above. A consumer adopts it by pinning a commit and
-wiring its own hooks; a consumer whose hooks still call `doc_sync.py` has not
-migrated. A change here changes no consumer until that consumer repins.
+four-file Composition (V2) above. A consumer adopts it by pinning a commit and
+wiring its own hooks; a consumer whose hooks still call the retired
+`doc_sync.py` has not migrated, and runs a copy installed from an earlier pin.
+A change here changes no consumer until that consumer repins.
 - `scripts/docops.py` — read-only `check` / `report` of an exact Git snapshot
   (`--tree index|<commit>`, `--push-stdin`), optionally validating an
   impact report that a reviewer wrote (`--impact-file PATH|-`); never
@@ -142,10 +137,10 @@ only a minimal JSON object with `error.code` IMPORT_FAILED is printed, in any
 format. Tests:
 `python3 -B -m unittest discover -s tests/tooling -t tests/tooling`.
 
-`MANIFEST.txt` is longer than the seven mechanism files. By ADR-0006, ADR-0008
+`MANIFEST.txt` is longer than the four mechanism files. By ADR-0006, ADR-0008
 and ADR-0017 it lists every tracked file under `scripts/`, `schemas/`,
 `skills/`, `rules/`, `docs/reference/` and `docs/tooltempest/`, so besides those
-seven it also holds the reference document below, the consumer contract
+four it also holds the reference document below, the consumer contract
 `docs/tooltempest/consumer-contract.md` (the text of the consumer obligation,
 its single source), the universal rules `docs/tooltempest/universal-rules.md`
 (the second file of the contract root), the manifest validator
@@ -154,7 +149,7 @@ the tooling bootstrap files above.
 
 ## Reference documentation (added by ADR-0008)
 
-A separate category from the seven mechanism files above:
+A separate category from the four mechanism files above:
 `docs/reference/` holds shared reference documents meant to be read and
 followed by a consuming project's Claude Code sessions, but **not**
 copied into a client config directory the way `rules/` files are —
@@ -230,10 +225,9 @@ when that commit is absent.
 Files are installed from the commit pinned in `.tooltempest.lock` by
 `scripts/tooling.py materialize` (described above): the default consumer target
 for `scripts/`, `schemas/` and the contract, the explicit client target for
-`skills/` and `rules/`. Besides the hook entry points `scripts/doc_sync.py` and
-`scripts/doc_sync_tier2.py` that consumers already run, the CLIs are
-`scripts/docops.py` and `scripts/tooling.py`. What a project adopts differs by
-which part of the composition it uses.
+`skills/` and `rules/`. The CLIs are `scripts/docops.py` and
+`scripts/tooling.py`. What a project adopts differs by which part of the
+composition it uses.
 
 **V1 markdown primitives** — installed into your client's configuration
 directory by the client target, e.g. for Claude Code:
@@ -253,27 +247,25 @@ directory by the client target, e.g. for Claude Code:
 **V2 DocOps Protocol** — opt-in, per project, wired through local git
 hooks rather than copied into a client config directory:
 
-1. Same clone-and-pin step as above; `scripts/doc_sync.py` is run from
+1. Same clone-and-pin step as above; `scripts/docops.py` is run from
    wherever the consuming project's own tooling makes it available
    (for example, `scripts/tooling.py materialize --apply` installs it with the
    other `scripts/` files of the pin).
-2. The consuming project's `.git/hooks/pre-commit` and
-   `.git/hooks/pre-push` call `doc_sync.py pre-commit` /
-   `doc_sync.py pre-push` respectively, and carry a header comment
-   citing `ADR-0001` plus the pinned `.tooltempest.lock` SHA — see
-   `docs/adr/0001-docops-protocol.md` for the full contract.
-3. `schemas/execution-record.schema.json` and `skills/doc-sync/SKILL.md`
-   are reference material for the resulting `.tempest/runs/` audit
-   records; neither needs to be copied anywhere to be useful — read
-   them directly from the pinned checkout or this repository.
+2. The consuming project's own local git hooks call `docops.py check`
+   (`--tree index` at commit time, `--push-stdin` at push time) and treat any
+   non-zero exit as a block. The wiring belongs to the project; see
+   `docs/adr/0013-docops-checker-spec-state-marker.md` for the checker.
+3. `skills/doc-sync/SKILL.md` is reference material for reading what the
+   checker reported; it needs no copying to be useful — read it directly from
+   the pinned checkout or this repository, or install it with the client target.
 
 ## Connecting a new project
 
 A step-by-step checklist for wiring up a brand-new ToolTempest
 consumer. This restates "Usage today" above as a linear sequence; for
-*why* each step exists, see ADR-0001
-(`docs/adr/0001-docops-protocol.md`) and ADR-0002
-(`docs/adr/0002-tier2-doc-sync.md`) in this repository.
+*why* each step exists, see ADR-0013
+(`docs/adr/0013-docops-checker-spec-state-marker.md`) and ADR-0017
+(`docs/adr/0017-distribution-model-components-fingerprint-delivery.md`) in this repository.
 
 1. **Pin `.tooltempest.lock`.** Create (or update) the consuming
    project's `.tooltempest.lock` with the full 40-character commit SHA
@@ -285,40 +277,35 @@ consumer. This restates "Usage today" above as a linear sequence; for
    and the contract root files (`docs/tooltempest/consumer-contract.md` and
    `docs/tooltempest/universal-rules.md`) from the pin
    and writes a receipt. A consuming project needs no installer of its own.
-3. **Activate the git hooks.** Again following article-pipeline's
-   pattern (`scripts/install-hooks.sh`, also not part of this
-   repository): install `pre-commit` and `pre-push` hooks that call
-   `doc_sync.py pre-commit` / `doc_sync.py pre-push`, with a header
-   comment citing `ADR-0001` and the pinned SHA, per "Usage today"
-   above. Re-run this after every resync so `.git/hooks/` picks up any
-   hook-source changes.
+3. **Activate the git hooks.** Install `pre-commit` and `pre-push` hooks
+   with the consuming project's own installer (none is part of this
+   repository) that call `docops.py check --tree index` and
+   `docops.py check --push-stdin`, per "Usage today" above. Re-run the
+   installer after every resync so `.git/hooks/` picks up any hook-source
+   changes.
 4. **No network in hooks.** Consumer hooks make no network calls
    (ADR-0017). ToolTempest does not provide a hook-time drift warning; a
    consumer that has one (a `git ls-remote` check in its pre-push hook) decides
    in its own ADR to remove it. Freshness is reported by `tooling.py status`
    from a local ref.
-5. **Reading a HARD BLOCK or WARNING.** Both come from `doc_sync.py`
-   or the consumer's own `scripts/verify.py`, printed directly to the
-   terminal at commit/push time — read that output first, not "ask
-   whoever set this up":
-   - A **HARD BLOCK** (`doc_sync.py pre-commit` or `pre-push` exits
-     non-zero) means either a staged file is genuinely structurally
-     invalid, or `scripts/verify.py` itself failed to run — the
-     printed message states which, and what to do about each case.
-     See ADR-0001 for the underlying RECONCILE/VALIDATE contract.
+5. **Reading a block or WARNING.** Both are printed directly to the terminal
+   at commit/push time by `docops.py` or by the consumer's own scripts — read
+   that output first, not "ask whoever set this up":
+   - A **block** (a hook exits non-zero) means `docops.py` found a violation
+     (exit 1) or could not produce a verdict (exit 2, never a pass), or a
+     consumer-side script failed. `docops.py report` prints the same result
+     as text; `skills/doc-sync/SKILL.md` lists the finding codes.
    - A **WARNING** (any consumer-side check) never blocks anything —
      it's informational. Read the printed line for which command to run
      next (e.g. `scripts/tooling.py materialize`).
 
 ## Scope
 
-This repository holds the seven mechanism files described in
+This repository holds the four mechanism files described in
 "Composition (V2)" above, shared reference documentation under
 `docs/reference/` (see "Reference documentation" above, added by
 ADR-0008), the source of the DocOps checker and the source of the tooling bootstrap
-(see "DocOps checker" and "Tooling bootstrap" above), neither of which is yet
-part of Composition (V2). Project-specific content (for example, a
+(see "DocOps checker" and "Tooling bootstrap" above), neither of which is part
+of Composition (V2). Project-specific content (for example, a
 given project's own `CHECKPOINT.md`, or its own `scripts/verify.py`)
-does not belong here and is not included. `doc_sync.py` calls a
-consuming project's `scripts/verify.py` as a subprocess but contains no
-knowledge of any specific project's domain, components, or content.
+does not belong here and is not included.

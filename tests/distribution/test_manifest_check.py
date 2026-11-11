@@ -3,7 +3,7 @@
 The checker compares MANIFEST.txt with `git ls-files` over the five composition
 directories and exits non-zero on a mismatch in either direction. Every negative
 case here runs against a disposable repository that holds a copy of the checker
-and of `doc_sync.py` (which it imports); the real MANIFEST.txt is only read, to
+(which imports no other script); the real MANIFEST.txt is only read, to
 derive realistic variants. The real checkout is checked in the positive tests.
 """
 import shutil
@@ -19,8 +19,7 @@ class ManifestFixtureCase(TempDirCase):
         a MANIFEST.txt listing every composition file ("auto"), the given text, or none."""
         fx = GitFixture()
         self.addCleanup(fx.cleanup)
-        for name in ("check_manifest.py", "doc_sync.py"):
-            fx.write("scripts/" + name, (SCRIPTS_DIR / name).read_bytes())
+        fx.write("scripts/check_manifest.py", (SCRIPTS_DIR / "check_manifest.py").read_bytes())
         for rel in extra_files:
             fx.write(rel, b"")
         fx.git("add", "-A")
@@ -45,7 +44,7 @@ class NegativeCaseTests(ManifestFixtureCase):
         fx = self.make_repo(self.COMPOSITION)
         code, out, err = self.check(fx)
         self.assertEqual((code, err), (0, ""))
-        self.assertIn("OK: MANIFEST.txt matches 6 tracked file(s)", out)  # the 4 plus the checker's own 2
+        self.assertIn("OK: MANIFEST.txt matches 5 tracked file(s)", out)  # the 4 plus the checker itself
 
     def test_a_tracked_file_missing_from_the_manifest_is_reported_by_name(self):
         fx = self.make_repo(self.COMPOSITION)
@@ -105,7 +104,7 @@ class NegativeCaseTests(ManifestFixtureCase):
             self.assertIn("  " + rel, err)
 
     def test_blank_lines_and_surrounding_whitespace_in_the_manifest_are_ignored(self):
-        listed = "\n".join(["", "  scripts/check_manifest.py  ", "scripts/doc_sync.py", "", ""] +
+        listed = "\n".join(["", "  scripts/check_manifest.py  ", "", ""] +
                            list(self.COMPOSITION)) + "\n"
         fx = self.make_repo(self.COMPOSITION, manifest=listed)
         self.assertEqual(self.check(fx)[0], 0)
@@ -124,6 +123,23 @@ class NegativeCaseTests(ManifestFixtureCase):
         code, out, err = self.check(fx, cwd=fx.root + "/rules")
         self.assertEqual((code, err), (0, ""), out)
 
+    def test_it_finds_the_root_of_a_linked_worktree_and_checks_that_tree(self):
+        fx = self.make_repo(self.COMPOSITION, tracked_manifest=True)
+        fx.commit("manifest")
+        linked = str(self.tempdir() / "linked")
+        fx.git("worktree", "add", "-q", "-b", "side", linked)
+        code, out, err = run_python([linked + "/scripts/check_manifest.py"], cwd=linked + "/rules")
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertIn("OK: MANIFEST.txt matches 5 tracked file(s)", out)
+
+    def test_outside_a_repository_it_fails_instead_of_guessing_a_root(self):
+        fx = self.make_repo(self.COMPOSITION)
+        elsewhere = self.tempdir()
+        code, out, err = run_python([fx.root + "/scripts/check_manifest.py"], cwd=elsewhere)
+        self.assertNotEqual(code, 0)
+        self.assertNotIn("OK:", out)
+        self.assertIn("CalledProcessError", err)
+
 
 class VariantsOfTheRealManifestTests(ManifestFixtureCase):
     """The negative cases again, built from the real composition file set, so that the
@@ -133,7 +149,7 @@ class VariantsOfTheRealManifestTests(ManifestFixtureCase):
         return git_out("ls-tree", "-r", "--name-only", "HEAD", "--", *COMPOSITION_DIRS).decode().splitlines()
 
     def real_repo(self, manifest_lines):
-        paths = [p for p in self.real_paths() if p not in ("scripts/check_manifest.py", "scripts/doc_sync.py")]
+        paths = [p for p in self.real_paths() if p != "scripts/check_manifest.py"]
         return self.make_repo(paths, manifest="\n".join(manifest_lines) + "\n")
 
     def test_the_real_manifest_is_complete_for_the_real_composition(self):

@@ -256,11 +256,8 @@ class MaterializedCopyRunsTests(MaterializedCase):
                 else:
                     self.assertIn("summary:", out)
 
-    def test_the_installed_legacy_scripts_import_and_the_manifest_check_runs(self):
+    def test_the_installed_manifest_check_runs(self):
         scripts = self.consumer / "scripts"
-        code, out, err = run_python(["-c", "import sys; sys.path.insert(0, %r); import doc_sync, doc_sync_tier2; "
-                                     "print('ok')" % str(scripts)], cwd=self.home)
-        self.assertEqual((code, out.strip()), (0, "ok"), err)
         # the consumer has no MANIFEST.txt of its own: the checker fails cleanly, it does not crash
         code, out, err = run_python([scripts / "check_manifest.py"], cwd=self.consumer)
         self.assertEqual(code, 1)

@@ -33,13 +33,12 @@ The components of the `drift:` line:
 
 ## DocOps-managed fields
 
-`scripts/doc_sync.py` (the DocOps Protocol) no longer manages any
-drift-tracking fields: CHECKPOINT.md support was retired entirely
-(ADR-0010, `mikkiola/tooltempest`) once every consuming project's own
-`scripts/verify.py` stopped recognizing it as a pattern. DocOps now
-validates only a `SPEC.md`'s own inline `## Milestones` checklist; the
-`verify:`/`done-when:`/`status:`/`drift:` fields above are tracked by
-convention, not enforced or auto-filled by any tool.
+DocOps manages no drift-tracking fields: CHECKPOINT.md support was
+retired entirely (ADR-0010, `mikkiola/tooltempest`) once every consuming
+project's own `scripts/verify.py` stopped recognizing it as a pattern.
+DocOps (`scripts/docops.py`) validates only a `SPEC.md`'s own `## Milestones`
+checklist; the `verify:`/`done-when:`/`status:`/`drift:` fields above are
+tracked by convention, not enforced or auto-filled by any tool.
 
 ## Drift thresholds
 
