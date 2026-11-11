@@ -2,9 +2,11 @@
 
 ToolTempest is the client-agnostic source for shared tooling primitives, not a
 consumer installation or an adapter. Read [README](README.md) for composition,
-lifecycle and scope, [docs/adr](docs/adr/) for decisions, and
-[documentation rules](docs/reference/documentation-rules.md) for shared document
-authority. This maintainer navigation file is not a distributable primitive.
+lifecycle and scope, and [docs/adr](docs/adr/) for decisions. The binding rules
+for documents and process are in
+[universal rules](docs/tooltempest/universal-rules.md); start with its section
+"How every repository works". This maintainer navigation file is not a
+distributable primitive.
 
 ## Source and distribution boundaries
 
@@ -34,8 +36,7 @@ The existing independent completeness command is:
 python3 scripts/check_manifest.py
 ```
 
-Run it after changes to composition paths and keep the manifest consistent in
-the same change. It compares tracked composition paths; an untracked file there
+The script compares tracked composition paths; an untracked file there
 still needs review and inclusion before publication.
 
 The DocOps checker (`scripts/docops.py`, `scripts/docops_core/`,
@@ -108,10 +109,8 @@ fixture repositories; its `verify.py` (`tests/fixtures/verify.py`) stands in for
 a consumer's own script and implements only the output contract `doc_sync.py`
 reads, it is not the production parser (that is tested in `tests/docops`). It is
 not permitted by a no-hook-execution task; do not
-run it or production `doc_sync.py` modes just to validate Markdown. Reuse prior
-results for unchanged source. Shared `/verify` text is source to review here,
+run it or production `doc_sync.py` modes just to validate Markdown. Shared `/verify` text is source to review here,
 not authorization for a live model-backed invocation.
 
-Keep implementation preparation separate from permission to commit/publish it.
 Do not change consumer locks, global installed files, hooks, permissions or MCP
 configuration during project-instruction work.
