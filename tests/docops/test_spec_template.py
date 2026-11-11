@@ -66,9 +66,8 @@ class SpecSkillLocationTests(unittest.TestCase):
 
 
 class DocSyncSkillTests(unittest.TestCase):
-    """The doc-sync skill must describe the shared checker as the only shipped mechanism and
-    the retired hooks only as retired. Text-level only: the tests cannot show that the
-    description is true of a given consumer's hooks."""
+    """The doc-sync skill must describe the shared checker. Text-level only: the tests cannot
+    show that the description is true of a given consumer's hooks."""
 
     def setUp(self):
         text = (Path(REPO_ROOT) / "skills" / "doc-sync" / "SKILL.md").read_text(encoding="utf-8")
@@ -90,13 +89,6 @@ class DocSyncSkillTests(unittest.TestCase):
     def test_it_says_the_checker_writes_no_run_record(self):
         self.assertIn("writes no run record", self.text)
         self.assertIn("no `.tempest/runs/` record", self.text)
-
-    def test_the_retired_hooks_are_described_as_retired_not_as_shipped_or_active(self):
-        self.assertIn("The earlier `scripts/doc_sync.py` hooks are retired and are no longer shipped", self.text)
-        self.assertNotIn("The legacy path", self.text)
-        self.assertNotIn("still shipped in this repository", self.text)
-        self.assertNotIn("DETECT", self.text)
-        self.assertNotIn("runs automatically from a consuming project's own", self.text)
 
 
 class SpecFormatTests(DocopsTestCase):

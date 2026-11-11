@@ -1,7 +1,7 @@
 """Fixtures for the distribution tests (standard library only).
 
-These tests qualify what ToolTempest hands to consumers: the manifest check,
-the import surface the legacy scripts share, and the file set `tooling.py`
+These tests qualify what ToolTempest hands to consumers: the manifest check
+and the file set `tooling.py`
 materializes for the exact candidate commit. Everything that writes runs in
 throwaway directories under the system temp directory with an isolated Git
 environment and HOME pointed at a temporary directory. The real checkout is only ever read (its

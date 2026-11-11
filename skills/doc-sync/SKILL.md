@@ -15,11 +15,6 @@ project's own hook files to see what it actually runs; do not assume. This
 skill is reference material for understanding and troubleshooting what a hook
 did; it does not itself modify anything.
 
-The earlier `scripts/doc_sync.py` hooks are retired and are no longer shipped
-(ADR-0001, ADR-0010 record them). A consumer whose hook files still call
-`doc_sync.py` runs a copy installed from an earlier pin; this skill does not
-describe it.
-
 ## The shared checker
 
 A project that has migrated wires its own hooks to the checker; the wiring
@@ -31,8 +26,7 @@ result; `report` takes the same arguments and prints the same result as text,
 which is easier to read when a hook blocks. The checker reads an exact Git
 snapshot (the index, a commit, or each pushed commit) and never the working
 tree. It writes nothing: no files, no staging, no commit, no network. In
-particular it writes no run record: it produces no `.tempest/runs/` record,
-which belonged to the retired hooks.
+particular it writes no run record: it produces no `.tempest/runs/` record.
 
 ### Which SPEC files it evaluates
 

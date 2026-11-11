@@ -33,9 +33,6 @@ The mechanism files are passive instructional text a client interprets on its
 own terms, by reading it. The executable code in this repository, the DocOps
 checker and the tooling bootstrap below, is source that a consumer pins and
 runs itself; it is listed in `MANIFEST.txt` but is not one of the four files.
-The V2 hook entry points of ADR-0001 and ADR-0002 (`scripts/doc_sync.py`,
-`scripts/doc_sync_tier2.py`) and their audit-record schema were retired and are
-no longer shipped; the two ADRs stay as the record of what they were.
 Consuming the checker means executing pinned code via git hooks the consumer
 wires itself, not only copying instructional text into a client's config
 directory.
@@ -44,8 +41,7 @@ DocOps checker (added by ADR-0013 — `docs/adr/0013-docops-checker-spec-state-m
 and extended by ADR-0014 — `docs/adr/0014-docops-impact-report-validator.md`).
 It is source only: tracked and listed in `MANIFEST.txt`, but not part of the
 four-file Composition (V2) above. A consumer adopts it by pinning a commit and
-wiring its own hooks; a consumer whose hooks still call the retired
-`doc_sync.py` has not migrated, and runs a copy installed from an earlier pin.
+wiring its own hooks.
 A change here changes no consumer until that consumer repins.
 - `scripts/docops.py` — read-only `check` / `report` of an exact Git snapshot
   (`--tree index|<commit>`, `--push-stdin`), optionally validating an
