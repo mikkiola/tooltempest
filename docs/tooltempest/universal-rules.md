@@ -133,7 +133,7 @@ word is a MUST.
 | TX-4 | A fact MUST live in one place. Other places link to it. |
 | TX-5 | An obligation MUST use a key word. |
 | TX-6 | A rule states the obligation and its condition. Use the shortest text that keeps the meaning. A document MUST NOT carry history, motivation, or a repeated fact; Git and the ADRs hold them. The ADR sections of DR-7 and the `Found` and `Source` lines of BL-3 are the exceptions. |
-| TX-7 | The reader and user of every tool, document, and repository artifact is an AI agent. The design criterion is that an agent finds the artifact, reads it without ambiguity, and acts correctly. Readability for a human is not a criterion. This rule does not authorize deleting, rewriting, or converting an existing artifact. Conversation with the Owner is in Russian (LG-2). |
+| TX-7 | The reader and user of every tool, document, and repository artifact is an AI agent. The design criterion is that an agent finds the artifact, reads it without ambiguity, and acts correctly. This rule does not authorize deleting, rewriting, or converting an existing artifact. Conversation with the Owner is in Russian (LG-2). |
 
 ## Decision records
 
