@@ -2,8 +2,8 @@
 repository-local tooling is missing, found out before a hook runs.
 
 Brain's actual pre-fix condition (Stage 0 finding F10): `.tooltempest.lock`
-pins a commit and a hash for scripts/doc_sync.py, the pre-commit hook calls
-scripts/doc_sync.py, and a clean worktree does not contain it, so the first
+pins a commit and a hash for scripts/hook_tool.py, the pre-commit hook calls
+scripts/hook_tool.py, and a clean worktree does not contain it, so the first
 commit died in a raw Python error. These are disposable fixtures that
 reproduce that condition; no real checkout is read or changed.
 """
@@ -16,19 +16,19 @@ from tooling_helpers import TOOLING_PY, ToolingCase, clean_env, run_tooling, sha
 
 HOOK = """#!/bin/sh
 # stand-in for Brain's .githooks/pre-commit: it needs the vendored tool
-exec python3 scripts/doc_sync.py pre-commit "$@"
+exec python3 scripts/hook_tool.py pre-commit "$@"
 """
 
 
 class BrainConditionTests(ToolingCase):
     def setUp(self):
         super().setUp()
-        self.upstream.publish({"scripts/doc_sync.py": "print('doc_sync')\n",
-                               "scripts/doc_sync_tier2.py": "print('tier2')\n",
+        self.upstream.publish({"scripts/hook_tool.py": "print('hook_tool')\n",
+                               "scripts/hook_tool_extra.py": "print('extra')\n",
                                "skills/spec/SKILL.md": "# spec\n"}, message="the pinned release")
         self.pin = self.upstream.fx.git("rev-parse", "HEAD")
-        digest = sha256(self.upstream.files["scripts/doc_sync.py"])
-        self.consumer.write_lock(self.pin, legacy=("scripts/doc_sync.py", digest))
+        digest = sha256(self.upstream.files["scripts/hook_tool.py"])
+        self.consumer.write_lock(self.pin, legacy=("scripts/hook_tool.py", digest))
         self.consumer.write(".githooks/pre-commit", HOOK, mode=0o755)
 
     def test_the_hook_fails_raw_but_verify_names_the_missing_dependency_first(self):
@@ -41,7 +41,7 @@ class BrainConditionTests(ToolingCase):
         self.assertEqual(code, 1)
         self.assertNotIn("Traceback", out + err)
         self.assertIn("DEPENDENCY_MISSING", out)
-        self.assertIn("scripts/doc_sync.py is required by the pin but is not installed", out)
+        self.assertIn("scripts/hook_tool.py is required by the pin but is not installed", out)
         self.assertIn("materialize", out)
         self.assertIn("--apply", out)
         self.assertIn("local integrity      FAILED", out)
@@ -51,8 +51,8 @@ class BrainConditionTests(ToolingCase):
         code, doc = self.verify()
         self.assertEqual(code, 1)
         missing = sorted(f["path"] for f in doc["findings"] if f["code"] == "DEPENDENCY_MISSING")
-        self.assertEqual(missing, ["scripts/doc_sync.py", "scripts/doc_sync_tier2.py"])
-        record = self.file(doc, "scripts/doc_sync.py")
+        self.assertEqual(missing, ["scripts/hook_tool.py", "scripts/hook_tool_extra.py"])
+        record = self.file(doc, "scripts/hook_tool.py")
         self.assertEqual((record["local"]["status"], record["provenance"]), ("missing", "verified"))
         self.assertEqual(record["declared"]["by"], "lock")
 
@@ -60,7 +60,7 @@ class BrainConditionTests(ToolingCase):
         code, doc = self.verify(source=os.path.join(self.home, "absent"))
         self.assertEqual(code, 1)
         self.assertEqual([f["path"] for f in doc["findings"] if f["code"] == "DEPENDENCY_MISSING"],
-                         ["scripts/doc_sync.py"])  # the one file the lock declares
+                         ["scripts/hook_tool.py"])  # the one file the lock declares
         self.assertIn("SOURCE_UNAVAILABLE", self.codes(doc, "error"))
 
     def test_verifying_changes_nothing_and_materialize_then_makes_the_hook_runnable(self):
@@ -70,15 +70,15 @@ class BrainConditionTests(ToolingCase):
         self.apply()
         ran = subprocess.run([self.consumer.path(".githooks/pre-commit")], cwd=self.consumer.root,
                              capture_output=True, env=clean_env({"HOME": self.home}))
-        self.assertEqual((ran.returncode, ran.stdout), (0, b"doc_sync\n"))
+        self.assertEqual((ran.returncode, ran.stdout), (0, b"hook_tool\n"))
         self.assertEqual(self.verify()[0], 0)
 
     def test_a_tampered_dependency_is_not_mistaken_for_a_present_one(self):
         self.apply()
-        self.consumer.write("scripts/doc_sync.py", "print('tampered')\n")
+        self.consumer.write("scripts/hook_tool.py", "print('tampered')\n")
         code, doc = self.verify()
         self.assertEqual(code, 1)
-        self.assertEqual(self.file(doc, "scripts/doc_sync.py")["local"]["status"], "modified")
+        self.assertEqual(self.file(doc, "scripts/hook_tool.py")["local"]["status"], "modified")
 
 
 class LinkedWorktreeTests(ToolingCase):

@@ -255,9 +255,9 @@ class LockParsingTests(unittest.TestCase):
 
     def test_the_real_consumer_lock_shape_is_accepted(self):
         text = ('{\n  "repository": "https://github.com/mikkiola/tooltempest.git",\n'
-                '  "commit": "de4436adc4540593fec52978b0e5ad5b7b949d9e",\n  "path": "scripts/doc_sync.py",\n'
+                '  "commit": "de4436adc4540593fec52978b0e5ad5b7b949d9e",\n  "path": "scripts/hook_tool.py",\n'
                 '  "sha256": "663f019d987669bd9afb7a66e1fac2c5eb0f647835849faadfd8cd5cc4e25d7a"\n}\n')
-        self.assertEqual(list(parse_lock(text.encode()).declared), ["scripts/doc_sync.py"])
+        self.assertEqual(list(parse_lock(text.encode()).declared), ["scripts/hook_tool.py"])
 
     def test_oversized_input_is_a_format_error(self):
         with self.assertRaises(FormatError):
