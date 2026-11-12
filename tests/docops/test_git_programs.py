@@ -17,6 +17,7 @@ Scope: this covers the Git calls the checker makes itself. It does not cover the
 around it (a pre-commit or pre-push hook that runs the checker), nor environment variables that
 make Git write elsewhere (`GIT_TRACE*`).
 """
+import json
 import os
 import shlex
 import shutil
@@ -98,6 +99,21 @@ class ConfiguredProgramsTests(DocopsTestCase):
             return proc.returncode, proc.stdout.decode("utf-8", "replace"), proc.stderr.decode("utf-8", "replace")
         return run_cli([command, *args, "--repo", self.fx.root], cwd=self.cwd, env=self.env(form_env))
 
+    def assert_checker_ran(self, command, out, err):
+        """The checker produced its result: `check` prints a JSON result whose `tool.name` and
+        `command` it always emits; `report` prints the text form, which starts with its own header."""
+        if command == "check":
+            try:
+                result = json.loads(out)
+            except ValueError:
+                self.fail("the checker printed no JSON result (it may not have run): out=%r err=%r"
+                          % (out[-200:], err[-200:]))
+            self.assertEqual((result["tool"]["name"], result["command"]), ("docops", "check"))
+        else:
+            self.assertTrue(out.startswith("docops report "),
+                            "the checker printed no report (it may not have run): out=%r err=%r"
+                            % (out[-200:], err[-200:]))
+
     # -- the daemon form ---------------------------------------------------------------------
     def daemon_watching(self):
         proc = self.plain_git({}, [], "fsmonitor--daemon", "status")
@@ -132,6 +148,8 @@ class ConfiguredProgramsTests(DocopsTestCase):
                         watch = Watch([self.fx.root, self.home], [self.fx.root])
                         code, out, err = self.run_docops(form_env, git_args, command, args)
                         self.assertIn(code, (0, 1), "no verdict: exit %s %r" % (code, err[-200:]))
+                        if form == "git -c":  # a failed alias lookup also exits 1: show the checker ran
+                            self.assert_checker_ran(command, out, err)
                         self.assertEqual(os.listdir(self.marker), [], "the configured program ran")
                         self.assertEqual(watch.diff(), [], "files, index, config or refs changed")
                         self.assertEqual(os.listdir(self.home), [])
