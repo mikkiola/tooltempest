@@ -7,6 +7,15 @@ disabled), and `GIT_OPTIONAL_LOCKS=0` so Git does not opportunistically
 refresh the index. A Git failure raises GitError; it is never turned
 into an empty snapshot.
 
+Every call also passes `-c core.fsmonitor=false`. Git runs the program named
+by `core.fsmonitor` when it reads the index (`ls-files --stage`), and with
+`core.fsmonitor=true` it starts a daemon that writes into the Git directory;
+a command-line `-c` outranks the repository, user and system configuration and
+the `GIT_CONFIG_COUNT` / `GIT_CONFIG_PARAMETERS` environment, so the checker
+never runs the `core.fsmonitor` program or starts the daemon it names. This
+covers that one key in the checker's own Git calls, not other settings and not
+the hook flow around it.
+
 The caller's GIT_* environment is inherited on purpose (a pre-commit hook
 relies on GIT_INDEX_FILE to name the index being committed), so GIT_DIR
 and friends, if set, decide which repository is read.
@@ -52,6 +61,10 @@ def is_zero_oid(value: str) -> bool:
     return bool(_ZERO_OID_RE.match(value))
 
 
+# Appended to every Git call: see the module docstring.
+_NEUTRAL_CONFIG = ["-c", "core.fsmonitor=false"]
+
+
 def _env() -> Dict[str, str]:
     env = dict(os.environ)
     env["GIT_OPTIONAL_LOCKS"] = "0"
@@ -63,7 +76,7 @@ def _env() -> Dict[str, str]:
 
 
 def _run(cwd: str, args: List[str], input_bytes: Optional[bytes] = None) -> bytes:
-    command = ["git", "-C", cwd] + args
+    command = ["git"] + _NEUTRAL_CONFIG + ["-C", cwd] + args
     stdin = {"input": input_bytes} if input_bytes is not None else {"stdin": subprocess.DEVNULL}
     try:
         proc = subprocess.run(

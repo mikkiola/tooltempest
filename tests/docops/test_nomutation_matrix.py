@@ -53,9 +53,8 @@ every possible input. It cannot see: a write that restores identical bytes with 
 modification time and inode; access times, ctime, ownership, extended attributes or ACLs;
 a subdirectory it cannot read (os.walk skips it); a same-second rewrite on a file system
 with one-second timestamps; anything written outside the protected roots; a concurrent
-writer would look like a failure. Git's own `core.fsmonitor` program is not a trap that
-stays silent: Git runs it when the checker reads the index (`--tree index`) and the checker
-neither starts nor sandboxes it; that case is pinned by its own test. Pager, editor and
+writer would look like a failure. The `core.fsmonitor` program and daemon are covered by
+test_git_programs.py (five delivery forms, with positive controls). Pager, editor and
 askpass settings are not exercised at all: they act only on interactive Git use (a terminal on
 standard output, an editor or a credential prompt), which a read-only checker never produces.
 """
@@ -171,7 +170,7 @@ class Watch:
 
 def install_traps(fx, tmp, marker):
     """Repository-local settings that write a tagged file into `marker` if Git runs them.
-    (core.fsmonitor is not among them: Git does run it for `--tree index`; see its own test.)"""
+    (core.fsmonitor is not among them: see test_git_programs.py.)"""
     def script(tag):
         path = os.path.join(tmp, "trap-%s.sh" % tag)
         with open(path, "w") as handle:
@@ -489,29 +488,6 @@ class NoMutationMatrix(DocopsTestCase):
         for key in TRAP_KEYS:
             self.assertIn(key, fired, "%s never ran, so its silence in the matrix proves nothing" % key)
         self.assertIn("hook-pre-commit", fired)
-
-    def test_a_configured_fsmonitor_is_run_by_git_for_the_index_and_the_repository_still_does_not_change(self):
-        """Known limitation, pinned so that it is not forgotten: with `core.fsmonitor` set in the
-        repository's own configuration, Git runs that program when the checker reads the index
-        (`--tree index`); it does not when it reads a commit. The checker neither starts nor
-        sandboxes the program. With a program that only logs, nothing in the repository changes."""
-        with GitFixture() as fx:
-            fx.commit_files({"SPEC.md": GOOD_SPEC})
-            script = os.path.join(self.tmp, "fsmonitor.sh")
-            with open(script, "w") as handle:
-                handle.write("#!/bin/sh\necho \"$@\" >> %s/fsmonitor.log\n" % self.marker)
-            os.chmod(script, 0o755)
-            fx.git("config", "core.fsmonitor", script)
-            for hit in os.listdir(self.marker):
-                os.unlink(os.path.join(self.marker, hit))
-            watch = Watch([fx.root, self.home, self.tmpdir], [fx.root])
-            code, _, _ = run_cli(["check", "--repo", fx.root, "--tree", "HEAD"], cwd=self.cwd, env=self.env())
-            self.assertEqual((code, os.listdir(self.marker)), (0, []), "reading a commit must not start it")
-            code, _, _ = run_cli(["check", "--repo", fx.root, "--tree", "index"], cwd=self.cwd, env=self.env())
-            self.assertEqual(code, 0)
-            self.assertEqual(os.listdir(self.marker), ["fsmonitor.log"])
-            os.unlink(os.path.join(self.marker, "fsmonitor.log"))
-            self.assertEqual(watch.diff(), [])
 
     def test_the_checkout_scripts_directory_gains_no_bytecode(self):
         before = fs_state(str(SCRIPTS_DIR))

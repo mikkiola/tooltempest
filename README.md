@@ -77,9 +77,11 @@ Git, policy or internal error: never a PASS or N/A; a usage error and a failure
 to render the output are printed on stderr only, a failure to write it leaves
 no result at all); 3 SPEC applicability
 cannot be established (defined, but no SPEC scope rule produces it any more;
-1 takes precedence when both apply). When it reads the index
-(`--tree index`), Git itself runs the program named by the repository's own
-`core.fsmonitor` setting, if any; the checker neither starts nor disables it.
+1 takes precedence when both apply). Its
+own Git calls disable `core.fsmonitor` (`-c core.fsmonitor=false`), so reading the
+index (`--tree index`) never runs the `core.fsmonitor` program or starts the daemon
+it names, whichever configuration level sets it; the hook flow around the checker
+is not covered.
 Tests: `python3 -B -m unittest discover -s tests/docops -t tests/docops`.
 
 Tooling bootstrap (added by ADR-0015 — `docs/adr/0015-tooling-bootstrap-verify-materialize.md`).
