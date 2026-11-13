@@ -50,6 +50,10 @@ EXPECTED = {
     "p6_neg_interp_flag_value.py": set(),
     "p6_limit_launcher.py": set(),
     "p6_limit_comma_in_string.py": set(),
+    "p6_limit_hash_in_string.py": set(),
+    "p7_limit_lowercase_name.py": set(),
+    "p7_limit_constant_first_in.py": set(),
+    "p1_limit_join_variable.py": set(),
     "p7_pos.py": {"P7"},
     "p7_neg.py": set(),
     "p7_pos_path_name.py": {"P7"},
@@ -158,8 +162,13 @@ class ContractTests(unittest.TestCase):
         # the suppressions and exemptions that narrow the patterns are disclosed, with their real triggers
         for needle in ("`hashlib` or `sha256`", "`.digest(`", "exempt from P1 and P2", "first later line", "node_modules",
                        "core.fsmonitor", "a program on PATH", "`--allow` hides a finding", "launcher",
-                       "interpreter held in a variable", "a comma or a `#` inside a quoted element"):
-            self.assertIn(needle, out)
+                       "interpreter held in a variable", "a `#` that follows whitespace inside a quoted element",
+                       "the scan sees lines, not the program", "stops at the next `cd`", "the next two code lines",
+                       "in no order", "UPPER_CASE token", "also inside a longer word",
+                       "`python` followed only by digits and dots", "a variable after a flag is taken",
+                       "Shell-shaped command text on any line", "a base held in a variable is not",
+                       "or the user's Git configuration", "system configuration", "the inherited GIT_* environment"):
+            self.assertIn(needle, " ".join(out.split()))  # the wrapping of the text does not matter
 
     def test_the_scan_changes_nothing_it_inspects(self):
         def digest():

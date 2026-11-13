@@ -15,17 +15,20 @@ and nothing else. A clean result means "none of these seven shapes was found", n
     P1  A path inside a local clone of the source repository, written as a literal or reached through a
         variable that holds the clone root, outside a Git object read.
     P2  `cd <clone>` followed by a relative `docs/`, `scripts/`, ... path.
-    P3  A path returned by a `resolve_*` / `find_*` style function and then executed, with no hash
-        check of that path in between.
+    P3  A path returned by a `resolve_*` / `find_*` style function and then executed, with no line
+        between the resolver and the execution that mentions both the variable and a hash word.
     P4  A sibling module imported from the directory the script sits in
-        (`sys.path` or `spec_from_file_location` built from `__file__`), in a file without any hash
-        check.
-    P5  A lookup of a `scripts/` file through `--git-common-dir`, `dirname` of it, or the main worktree.
-    P6  A hash is computed, but of a different path than the one that is executed. In Python only the
-        file a `subprocess` list runs counts (a variable, or a `.py`/`.sh`/`scripts/` string, after an
+        (`sys.path` or `spec_from_file_location` built from `__file__`), in a file that never
+        mentions `hashlib` or `sha256`.
+    P5  A lookup of a `scripts/` file through `--git-common-dir` or `dirname` of it, or a
+        `git worktree list` piped to `head`/`awk`/`sed`/`cut` (the main worktree).
+    P6  A hash is computed, but of a different path than the one that is executed. Executed paths are the
+        operands of `python`/`bash`/`sh`/`zsh`/`source`/`exec` command text on any line that are a `$variable`,
+        end in `.py` or `.sh`, or contain `scripts/`, and the file a
+        Python `subprocess` list runs (a variable, or a `.py`/`.sh`/`scripts/` string, after an
         interpreter if there is one); a program found on PATH, such as `git`, is not a pinned file.
-    P7  A gate that compares the path of a read with a constant normative path, in a file without any
-        content comparison.
+    P7  A gate that compares the path of a read with a constant normative path, in a file that never
+        mentions `sha256`, `hexdigest`, `.digest(` or the word `blob`.
 
 `--allow PATTERN:PATHSUFFIX:REASON` is an explicit exclusion: findings of that pattern in files whose path equals
 PATHSUFFIX or ends with `/PATHSUFFIX` are printed as `allowed`, with the reason, counted apart, and do not change
@@ -96,39 +99,51 @@ PY_STRING = re.compile(r"""["']([^"']+)["']""")
 
 LIMITS = """Forms the scan does not cover (not covered; a clean result says nothing about them):
 - a path built by an interpreter or a program (python -c, perl, node, awk) instead of a shell or Python line
-- a path held in a variable that does not hold the clone root, or assembled across several lines or files
+- a path held in a variable that does not hold the clone root
 - a destination or source reached through a symlink, a config file, an environment variable set elsewhere
-- a read or run that is split over a line continuation, a here-document or a generated script
+- the scan sees lines, not the program. Its reach across lines: P1 and P5 use a variable assigned anywhere in the file;
+  P2 looks at the next eight code lines and stops at the next `cd`; P3 looks at later code lines up to the first one
+  that runs the variable or mentions it with a hash word; P4 looks at the import line and, for
+  `spec_from_file_location`, the next two code lines (the `sys.path` form is read on its own line); P6 compares
+  whole-file sets of hashed and executed paths, in no order, and reads a whole `subprocess` list. A path split across
+  other lines, a command assembled from several lines, a here-document or a generated script is not recognized
 - Git writes (checkout, restore, apply, stash, merge), curl -o, tar -x, ln, rsync, cp -t DIR
 - a hash that is computed and then compared to something that is not the pinned value
 - a race between the check and the run (the file changes after it was hashed)
 - an interpreter executing a file through a wrapper (make, npm scripts, a launcher)
 - P6 ignores the leading root variable of a path, so `$A/scripts/x.py` and `$B/scripts/x.py` count as the same
 - P6 takes as the executed file of a Python `subprocess` list the first variable or `.py`/`.sh`/`scripts/` string after
-  an optional interpreter named `sys.executable`, `python*`, `bash`, `sh` or `zsh` (and the flags and flag values after
-  it). It does not recognize: a launcher (`uv run x.py`), an interpreter held in a variable (`[python_bin, tool]`
-  reports `python_bin`), an element that is a call, a subscript or an f-string, a list closed by a `]` inside an
-  element, a comma or a `#` inside a quoted element, and a plain string that is not a file name (a program on PATH,
-  such as `git`, is not a pinned file)
+  an optional interpreter (`sys.executable`, `python` followed only by digits and dots such as `python3.12`, `bash`,
+  `sh` or `zsh`, with or without a directory) and its flags; plain-string values after the interpreter are skipped, a
+  variable after a flag is taken as the executed file. Shell-shaped command text on any line counts as well, when its
+  operand is a `$variable`, ends in `.py` or `.sh`, or contains `scripts/`. It does not recognize: a launcher (`uv run x.py`), an interpreter held in a variable (`[python_bin, tool]` reports
+  `python_bin`), an element that is a call, a subscript or an f-string, a list closed by a `]` inside an element, a
+  comma or a `#` that follows whitespace inside a quoted element, and a plain string that is not a file name (a
+  program on PATH, such as `git`, is not a pinned file)
 - `--allow` hides a finding of that pattern from the exit code in every scanned file whose path equals the given path
   suffix or ends with "/" and that suffix; an entry that matches nothing is printed, a duplicate entry is a usage error
 - a mention of `hashlib` or `sha256` anywhere in a file suppresses P4 for that file; a mention of `sha256`,
-  `hexdigest`, `.digest(` or `blob` anywhere in a file suppresses P7 for that file
+  `hexdigest`, `.digest(` or the word `blob` anywhere in a file suppresses P7 for that file
 - a line that starts with echo, printf or print, or that holds the word `git` followed by a Git read word (cat-file,
   show, ls-tree, rev-parse, rev-list, log, status, worktree, diff, ls-files, for-each-ref), or `ObjectStore`, is
   exempt from P1 and P2
 - P3 stops looking at the first later line that mentions the resolved variable together with a hash word, whether or
   not that hash is compared
-- P7 needs, on one line, `file_path`, `filepath` or `path`, a comparison (`==`, `!=` or `in`), and a constant whose
-  name contains RULES, NORMATIVE, PINNED, DOC or DOCS
-- a clone path built without a recognizable home, workspace or cache literal (os.path.join of parts)
+- P7 needs, on one line and with no `#` between the parts: `file_path` or `filepath` (also inside a longer word) or the
+  word `path`, then later `==`, `!=` or the word `in`, then later an UPPER_CASE token that contains RULES, NORMATIVE,
+  PINNED, DOC or DOCS; or such a token, then later `==` or `!=`, then later `file_path` or `filepath`. A lower-case
+  name, and `in` or a bare `path` with the name first, are not seen
+- a clone path whose home, workspace or cache part is not one of `Path.home()`, `$HOME`, `${HOME}`, `~`, `WORKSPACE`,
+  `/Users/<name>` or `.cache/tooltempest/repo` on the same line (a literal join such as
+  `os.path.join(Path.home(), "Dev", "tooltempest", "docs")` is seen; a base held in a variable is not)
 - a resolver whose name is not resolve_/find_/locate_/discover_/lookup_
 - docstrings and string literals are scanned as code, so prose that quotes a pattern is reported
 - any language other than shell and Python. A directory walk reads only .py/.sh/.bash/.zsh files and extensionless
   files with a shebang, and skips .git, node_modules, __pycache__, .venv and venv; a file named on the command line is
   always read
-- the hygiene check disables only the `core.fsmonitor` program of the clone; a clean filter or another program that the
-  clone's own configuration names can still start
+- the hygiene check disables only the `core.fsmonitor` program, the system configuration, the inherited GIT_*
+  environment and network protocols; a clean filter or another program that the clone's own or the user's Git
+  configuration names can still start
 The scan finds shapes. It does not prove that a file reads only pinned content."""
 
 
