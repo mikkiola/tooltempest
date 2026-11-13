@@ -27,7 +27,7 @@ Normative content and the executables that a gate or hook relies on are taken fr
 3. A gate accepts a read as evidence by content: the bytes the reader received must equal the verified blob. The path of the read does not matter. A document that a read cannot reproduce byte for byte cannot be evidence, and the gate refuses it with that reason.
 4. Any failure of a gate (internal error, missing object, mismatch, unreadable input) denies. A gate does not fetch and does not write. A missing object denies with the exact command that fetches the pinned commit.
 5. A pinned executable runs only after the installed file set matches its install receipt and the pinned objects. There is no fallback to another worktree or clone, and the hook prints the path and hashes it used.
-6. The known patterns of this defect class are guarded by a static scan with fixtures. A clone that is behind, dirty or detached is reported as a warning and never blocks.
+6. The known patterns of this defect class are covered by a static scan with fixtures. The scan runs by hand on real hook files, and CI runs only its fixture tests; it does not enforce anything by itself. A clone that is behind, dirty or detached is reported as a warning and never blocks.
 
 ## Alternatives & Rationale
 
