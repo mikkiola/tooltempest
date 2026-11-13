@@ -17,6 +17,7 @@ scripts/docops_core/gitstate.py
 scripts/docops_core/impact.py
 scripts/docops_core/policy.py
 scripts/docops_core/specparse.py
+scripts/scratch_wt_exec2.sh
 scripts/tooling.py
 scripts/tooling_core/__init__.py
 scripts/tooling_core/cli.py
