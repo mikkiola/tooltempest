@@ -1,6 +1,6 @@
 # ADR-0022: Normative Content and Gate Executables Are Read From the Pinned Commit Through a Verified Object Store
 
-Status: Accepted by the Owner, 2026-11-12. It supersedes no ADR. It extends the principle of ADR-0015 (pin by commit, verify by hash, read Git objects, never a working tree) from the installer to every gate and hook that relies on pinned content.
+Status: Accepted by the Owner, 2026-11-13. It supersedes no ADR. It extends the principle of ADR-0015 (pin by commit, verify by hash, read Git objects, never a working tree) from the installer to every gate and hook that relies on pinned content.
 
 ## Context & Constraints
 
