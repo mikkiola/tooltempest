@@ -6,8 +6,9 @@
 
 `check` prints a versioned JSON result, `report` the same result as
 text. Exit 0 only when every evaluated check is PASS or N/A; 1 on a
-violation, or when a supplied impact report's required assessment is not
-complete; 2 when the checker could not run to a verdict (usage,
+violation, when a supplied impact report's required assessment is not
+complete, or when, in a commit or push check, a changed code path has no
+impact report (ADR-0023); 2 when the checker could not run to a verdict (usage,
 dependency, I/O, Git, policy, internal error: never a per-check status; a
 usage error and a failure to render the output are printed on stderr
 only, a failure to write it leaves no result at all, any other failure

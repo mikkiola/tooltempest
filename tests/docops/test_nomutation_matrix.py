@@ -242,6 +242,9 @@ class NoMutationMatrix(DocopsTestCase):
         fx.git("tag", "-a", "-m", "annotated", "v1", cls.commits["feature"])
         fx.git("tag", "light")
         cls.commits["good"] = cls.commits["main"]
+        # The good ref is already published: these cases test the handling of push input, not the impact
+        # signal (test_signal.py), which only looks at commits that no remote-tracking ref holds.
+        fx.git("update-ref", "refs/remotes/origin/main", cls.commits["main"])
         fx.stage("SPEC.md", GOOD_SPEC.replace("first", "second"))  # staged change
         fx.write("code.py", "x = 2\n")                              # unstaged change
         fx.write("untracked.txt", "u\n")

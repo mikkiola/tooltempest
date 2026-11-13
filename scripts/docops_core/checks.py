@@ -20,16 +20,19 @@ not a per-check status. It is a tool failure: the snapshot result carries
 an `error` object instead of `checks`, its status is null, and the run
 exits 2. It can never be read as N/A or PASS.
 
-DOC_IMPACT_ASSESSMENT is evaluated only when an impact report is supplied
-(`--impact-file`, see impact.py and ADR-0014); every other dimension, and
-this one without a report, carries `assessed: false` and a reason, and no
-`status` at all, so no fifth status value exists. They are separate
-fields so they cannot be inferred from, or folded into, the structural
-verdict.
+DOC_IMPACT_ASSESSMENT is evaluated when an impact report is supplied
+(`--impact-file`, see impact.py and ADR-0014), and in a commit or push check
+also when a code path changed (ADR-0023: a report found for that exact change is
+validated, none is FAIL). Every other dimension, and this one otherwise, carries
+`assessed: false` and a reason, and no `status` at all, so no fifth status value
+exists. They are separate fields so they cannot be inferred from, or folded
+into, the structural verdict.
 """
 from __future__ import annotations
 
+import os
 import posixpath
+import stat
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -58,8 +61,8 @@ DIMENSIONS = (
 )
 _NOT_ASSESSED_REASON = (
     "not assessed by 'docops check' in this run; SPEC_STRUCTURE is evaluated, and "
-    "DOC_IMPACT_ASSESSMENT only when --impact-file is given. No verdict here implies "
-    "anything about this dimension"
+    "DOC_IMPACT_ASSESSMENT when --impact-file is given or a commit or push check finds a changed "
+    "code path. No verdict here implies anything about this dimension"
 )
 
 
@@ -446,6 +449,70 @@ def deleted_snapshot_result(request: dict,
     return snapshot_result(request, info, spec_structure, impact)
 
 
+def _change_mode(request: dict) -> str:
+    if request["kind"] == "index":
+        return "commit"
+    return "push" if "remote_oid" in request else "other"
+
+
+def _base_commit(repo: gitstate.Repository, request: dict, mode: str) -> Optional[str]:
+    """The commit a change is measured from: HEAD for a commit check, the old tip of a pushed ref (or,
+    for a new ref, the base of its unpublished commits). None means the empty tree."""
+    if mode == "commit":
+        return gitstate.head_commit(repo)
+    old = request["remote_oid"]
+    return gitstate.unpublished_base(repo, request["rev"]) if gitstate.is_zero_oid(old) else old
+
+
+def _stored_report(path: str) -> Optional[impact_mod.ParsedReport]:
+    try:
+        if not os.path.lexists(path):
+            return None
+        if not stat.S_ISREG(os.stat(path).st_mode):  # a directory or a pipe is never opened
+            raise OSError("not a regular file")
+        with open(path, "rb") as handle:
+            raw = handle.read(impact_mod.MAX_REPORT_BYTES + 1)
+    except OSError as exc:
+        raise ToolFailure("IMPACT_REPORT_UNREADABLE", "impact report %s could not be read: %s" % (path, exc))
+    return impact_mod.load_report(raw, "file", path)
+
+
+def _required_impact(snapshot: Snapshot, request: dict, mode: str) -> Optional[dict]:
+    """DOC_IMPACT_ASSESSMENT of a commit or push check that was given no report (ADR-0023)."""
+    repo = snapshot.repo
+    base_oid = _base_commit(repo, request, mode)
+    width = len(snapshot.entries[0].oid) if snapshot.entries else 40
+    if base_oid is None:
+        base_tree, base_entries = gitstate.index_tree_oid([], width), []
+    else:
+        try:
+            base_oid = gitstate.resolve_commit(repo, base_oid)  # peels an annotated tag to its commit
+        except GitError:
+            raise ToolFailure("IMPACT_BASE_UNAVAILABLE",
+                              "the base %s of the change is not in this repository" % base_oid)
+        base_tree = gitstate.commit_tree_oid(repo, base_oid)
+        base_entries = gitstate.list_tree(repo, base_tree)
+    subject_tree = snapshot.identity["tree"] or gitstate.index_tree_oid(snapshot.entries, width)
+    changed = impact_mod.changed_between(base_entries, snapshot.entries)
+    kinds = {path: impact_mod.classify_path(path) for path in changed}
+    code_paths = [path for path in changed if kinds[path] == "code"]
+    unclassified = [path for path in changed if kinds[path] is None]
+    needs_report = bool(code_paths or unclassified)
+    if needs_report and subject_tree is None:  # an index with unmerged entries has no tree to bind a report to
+        return impact_mod.required_dimension(
+            impact_mod.NO_SUBJECT, "the index holds unmerged entries and has no tree, so no impact report can be "
+            "bound to it. Resolve the conflicts, then repeat the action.", None, base_tree, None, len(changed))
+    path = gitstate.impact_report_path(repo, base_tree, subject_tree) if needs_report else None
+    parsed = _stored_report(path) if needs_report else None
+    found = impact_mod.assess(parsed, snapshot, base_oid, spec_candidate_paths) if parsed else None
+    status, why = impact_mod.outcome(mode, not unclassified, bool(code_paths), found["status"] if found else None)
+    if status is None or why is None:
+        return found
+    message = (impact_mod.unclassified_message(unclassified) if why == impact_mod.UNCLASSIFIED
+               else impact_mod.required_message(code_paths, base_tree, subject_tree, path))
+    return impact_mod.required_dimension(why, message, path, base_tree, subject_tree, len(changed))
+
+
 def check_request(repo: gitstate.Repository, request: dict,
                   report: Optional[impact_mod.ParsedReport] = None) -> dict:
     """Resolve and check one request. Any failure becomes a tool-error result;
@@ -464,12 +531,15 @@ def check_request(repo: gitstate.Repository, request: dict,
                                      "%s: %s" % (type(exc).__name__, exc))
 
     info = {"kind": snapshot.kind, **snapshot.identity}
+    mode = _change_mode(request)
     try:
         spec_structure = check_spec_structure(snapshot)
         impact = None
         if report is not None:
             impact = impact_mod.assess(report, snapshot, request.get("remote_oid"),
                                        spec_candidate_paths)
+        elif mode != "other":
+            impact = _required_impact(snapshot, request, mode)
     except ToolFailure as exc:
         return error_snapshot_result(request, exc.code, exc.message, info)
     except GitError as exc:

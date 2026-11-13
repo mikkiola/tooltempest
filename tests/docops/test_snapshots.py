@@ -611,7 +611,7 @@ class ClassificationTests(DocopsTestCase):
             fx.commit_files({"SPEC.md": GOOD_SPEC, "f/SPEC.md": "x\n", "g/SPEC.md": "x\n",
                              ".docops-policy.json": policy_doc(non_active=[listed("f/SPEC.md")])})
             result = check(fx, "HEAD")
-            document = {"schema_version": 1, "tool": {"name": "docops", "version": "0.3.0"},
+            document = {"schema_version": 1, "tool": {"name": "docops", "version": "0.4.0"},
                         "command": "check", "repository": {"root": fx.root}, "snapshots": [result],
                         "summary": {"status": result["status"], "exit_code": result["exit_code"],
                                     "tool_errors": 0}}

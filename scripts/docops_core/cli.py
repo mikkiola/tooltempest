@@ -5,9 +5,10 @@ JSON on stdout; `report` prints the same result as text. Exit codes
 (also in the result's summary.exit_code):
 
   0  every evaluated check is PASS or N/A
-  1  an invariant is violated (FAIL), or a supplied impact report's required
-     assessment is not complete (its dimension is SKIP: missing, stale or
-     unverifiable evidence)
+  1  an invariant is violated (FAIL), or the required impact assessment is not
+     satisfied: a commit or push check found a changed code path and no report
+     (ADR-0023), or a report's assessment is not complete (its dimension is
+     SKIP: missing, stale or unverifiable evidence)
   2  the checker could not produce a verdict: usage, dependency, I/O, Git,
      policy or internal error. This is a tool failure reported through the
      exit code, not a per-check status: a usage error and a failure to render
@@ -22,6 +23,9 @@ JSON on stdout; `report` prints the same result as text. Exit codes
 report against each inspected snapshot (DOC_IMPACT_ASSESSMENT). A report that
 cannot be read at all (missing file, I/O error) is a tool failure (exit 2); one
 that is read but malformed or inconsistent is a FAIL of that dimension.
+Without it, a commit check (`--tree index`) or a push check (`--push-stdin`)
+that finds a changed code path looks for the report of that exact change in the
+Git directory and fails with IMPACT_REPORT_REQUIRED if there is none (ADR-0023).
 
 No failure path exits 0.
 """
@@ -38,8 +42,8 @@ from .gitstate import GitError
 
 EXIT_CODES_HELP = """exit codes:
   0  every evaluated check is PASS or N/A
-  1  an invariant is violated (FAIL), or a supplied impact report's required
-     assessment is not complete
+  1  an invariant is violated (FAIL), or the required impact assessment is not
+     satisfied (a changed code path with no report, or an incomplete report)
   2  no verdict: usage, dependency, I/O, Git, policy or internal error
   3  SPEC applicability cannot be established (no SPEC rule produces it today;
      1 takes precedence when both apply)
@@ -82,7 +86,9 @@ def _parser() -> argparse.ArgumentParser:
             metavar="PATH|-",
             help="validate an impact report (schemas/docops-impact-report.schema.json) written "
             "by the reviewer, against each inspected snapshot; '-' reads standard input "
-            "(not combinable with --push-stdin). Never written, generated or edited.",
+            "(not combinable with --push-stdin). Never written, generated or edited. Without it, "
+            "a commit or push check that finds a changed code path looks for the report of that "
+            "exact change in the Git directory (ADR-0023).",
         )
         cmd.add_argument("--repo", default=".", help="repository path (default: current directory)")
     return parser
@@ -239,7 +245,8 @@ def _render_lines(result: dict) -> str:
                                                             portion["reason"]))
                 out.append("    base %s: %s" % (
                     check["base"]["tree"],
-                    "verified against the old tip of the push" if check["base"]["independently_verified"]
+                    "verified against the base commit (HEAD, or the old tip of the push)"
+                    if check["base"]["independently_verified"]
                     else "NOT independently verified (completeness is relative to this base)"))
                 for diag in check["diagnostics"]:
                     out.append("    %s %s: %s%s" % (diag["effect"], diag["code"], diag["message"],

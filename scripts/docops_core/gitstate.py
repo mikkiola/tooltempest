@@ -202,6 +202,41 @@ def resolve_commit(repo: Repository, rev: str) -> str:
     return oid
 
 
+def head_commit(repo: Repository) -> Optional[str]:
+    """The commit HEAD names, or None when HEAD is unborn: it names a branch that does not exist yet. A HEAD
+    whose commit is missing, or a detached HEAD that does not resolve, is a GitError."""
+    try:
+        return resolve_commit(repo, "HEAD")
+    except GitError:
+        target = _run(repo.cwd, ["symbolic-ref", "-q", "HEAD"]).decode("utf-8", "surrogateescape").strip()
+        try:  # a ref that exists but whose commit is missing still resolves to an id here
+            _run(repo.cwd, ["rev-parse", "--verify", "--quiet", "--end-of-options", target])
+        except GitError:
+            return None  # the branch HEAD names has no ref: nothing has been committed
+        raise
+
+
+def unpublished_base(repo: Repository, tip: str) -> Optional[str]:
+    """The base of a ref that has no old tip: the parent of the oldest commit reachable from `tip` that no
+    remote-tracking ref holds; `tip` itself when there is none (nothing new); None for a root commit. With
+    several unpublished roots the first in topological order decides, so the change set can hold published
+    changes of another root too (over-reporting), and no unpublished change is missed."""
+    new = _run(repo.cwd, ["rev-list", "--reverse", "--topo-order", tip, "--not", "--remotes"]).decode().split()
+    if not new:
+        return tip
+    parents = _run(repo.cwd, ["rev-list", "--parents", "-n", "1", new[0]]).decode().split()
+    return parents[1] if len(parents) > 1 else None
+
+
+def impact_report_path(repo: Repository, base_tree: str, subject_tree: str) -> str:
+    """Where the impact report of exactly this change is looked for (ADR-0023): in the Git common
+    directory, so it is not a tracked file and linked worktrees share it."""
+    common = _run(repo.cwd, ["rev-parse", "--git-common-dir"]).decode("utf-8", "surrogateescape").strip()
+    if not os.path.isabs(common):
+        common = os.path.join(repo.cwd, common)
+    return os.path.join(common, "docops-impact", "%s_%s.json" % (base_tree, subject_tree))
+
+
 def commit_snapshot(repo: Repository, rev: str) -> Snapshot:
     try:
         commit = resolve_commit(repo, rev)

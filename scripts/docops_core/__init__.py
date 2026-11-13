@@ -7,5 +7,5 @@ and every Git call runs with network protocols denied (see gitstate.py).
 """
 
 TOOL_NAME = "docops"
-TOOL_VERSION = "0.3.0"
+TOOL_VERSION = "0.4.0"
 RESULT_SCHEMA_VERSION = 1

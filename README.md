@@ -53,7 +53,11 @@ A change here changes no consumer until that consumer repins.
 
 It evaluates SPEC structure. Given an impact report it also checks that the
 report is well-formed, bound to the snapshot under check, complete against
-the change and current, and never whether its statements are true. Every
+the change and current, and never whether its statements are true. A commit or
+push check that finds a changed code path (any changed file that is not
+Markdown) and no report for that exact change fails with
+`IMPACT_REPORT_REQUIRED`; its message tells the executing agent what to do
+(ADR-0023, `skills/doc-sync/SKILL.md`). Every
 other result dimension is reported as `assessed: false` (it carries no
 status). A SPEC declares "no active task" in its frontmatter (`---` /
 `spec-state: idle` / `---` at the top of the file). The root `SPEC.md` is
@@ -71,8 +75,8 @@ explicit root entry). Other spellings such as
 names is not a failure of this check (no SPEC: N/A); an explicit policy entry
 for an absent root is a FAIL (`SPEC_MISSING`). Exit codes (also
 `summary.exit_code`; the same list is in `--help`): 0 every evaluated check is
-PASS or N/A; 1 a violation, or a supplied impact report's required assessment is
-not complete; 2 the checker could not produce a verdict (usage, dependency, I/O,
+PASS or N/A; 1 a violation, a commit or push check that found a changed code
+path and no impact report, or an impact report whose assessment is not complete; 2 the checker could not produce a verdict (usage, dependency, I/O,
 Git, policy or internal error: never a PASS or N/A; a usage error and a failure
 to render the output are printed on stderr only, a failure to write it leaves
 no result at all); 3 SPEC applicability

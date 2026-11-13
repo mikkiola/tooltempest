@@ -1,8 +1,9 @@
 """DOC_IMPACT_ASSESSMENT: deterministic validation of an impact report.
 
 The report is written by whoever reviewed the change (a person or an
-agent) and supplied with `--impact-file`. This module never writes,
-generates or interprets one. It establishes four things and nothing
+agent), supplied with `--impact-file` or stored in the Git directory for a
+commit or push check (ADR-0023). This module never writes, generates or
+interprets one. It establishes four things and nothing
 else (ADR-0014):
 
   structure     the report has the fields its mode and profile require
@@ -15,6 +16,10 @@ else (ADR-0014):
   freshness     each piece of evidence was gathered on a tree and over a
                 scope; it is stale if a path in its scope differs between
                 that tree and the subject
+
+A commit check or a push check that finds a changed code path and no report at all
+fails with IMPACT_REPORT_REQUIRED, a command to the executing agent (ADR-0023); `outcome`
+is that decision as a pure function, `classify_path` the classification it rests on.
 
 Whether the report is *true* (that a change is small, that a category is
 unaffected, that a document is consistent) is not decided here. A PASS
@@ -491,13 +496,77 @@ def _validate_references(data: dict, known: set, diags: _Diags) -> None:
 # --- assessment against a snapshot ------------------------------------------
 
 def _entry_map(entries) -> Dict[str, Tuple[str, str]]:
-    """path -> (mode, oid). Callers pass merged entries only: commit and tree listings
-    are always stage 0, and an index with unmerged entries is rejected before this."""
+    """path -> (mode, oid). Commit and tree listings are always stage 0. In an index with unmerged
+    entries a conflicted path keeps its last stage; a caller that must not depend on that checks
+    for such an index first (checks._required_impact binds a report to a tree and fails without one)."""
     return {e.path: (e.mode, e.oid) for e in entries}
 
 
 def _changed_paths(old: Dict[str, Tuple[str, str]], new: Dict[str, Tuple[str, str]]) -> List[str]:
     return sorted(p for p in set(old) | set(new) if old.get(p) != new.get(p))
+
+
+def changed_between(base_entries, subject_entries) -> List[str]:
+    """The paths whose mode or object id differ between two listings."""
+    return _changed_paths(_entry_map(base_entries), _entry_map(subject_entries))
+
+
+REQUIRED = "IMPACT_REPORT_REQUIRED"
+UNCLASSIFIED = "IMPACT_CLASSIFICATION_FAILED"
+NO_SUBJECT = "IMPACT_SUBJECT_UNAVAILABLE"
+CODE_LIST_LIMIT = 50
+
+
+def classify_path(path: str) -> Optional[str]:
+    """"document" for a Markdown file, "code" for any other file, None for a path that cannot be
+    classified: empty, not valid UTF-8, or holding a control character (ADR-0023 Decision 2)."""
+    if not path or any(ord(c) < 32 or c == "\x7f" or "\ud800" <= c <= "\udfff" for c in path):
+        return None
+    return "document" if path.lower().endswith(".md") else "code"
+
+
+def outcome(mode: str, classified: bool, code_changed: bool, report_status: Optional[str]):
+    """(status, reason code) of DOC_IMPACT_ASSESSMENT for one snapshot, status None = not assessed.
+    `mode` is "commit", "push" or "other"; `report_status` is the validator's status for the report
+    that exists for this change, or None when there is none (ADR-0023)."""
+    if report_status is not None:
+        return report_status, None
+    if mode == "other":
+        return None, None
+    if not classified:
+        return FAIL, UNCLASSIFIED
+    return (FAIL, REQUIRED) if code_changed else (None, None)
+
+
+def required_message(code_paths: List[str], base_tree: str, subject_tree: str, path: str) -> str:
+    more = " (+%d more)" % (len(code_paths) - CODE_LIST_LIMIT) if len(code_paths) > CODE_LIST_LIMIT else ""
+    return ("%d code path(s) changed and no impact report exists for this change. Do this, then repeat the "
+            "action: (1) assess the effect of the change on these categories: %s; (2) update the documents "
+            "that are affected, or record the reason that none is; (3) write the impact report (profile "
+            "minimal is enough for an ordinary change; format: schemas/docops-impact-report.schema.json; "
+            "base_tree %s, subject_tree %s) to %s (create its directory if it does not exist). "
+            "Changed code paths: %s%s"
+            % (len(code_paths), ", ".join(CATEGORIES), base_tree, subject_tree, path,
+               ", ".join(code_paths[:CODE_LIST_LIMIT]), more))
+
+
+def unclassified_message(paths: List[str]) -> str:
+    return ("%d changed path(s) cannot be classified as code or document (a name that is empty, is not valid "
+            "UTF-8 or holds a control character): %s. Rename or remove them, then repeat the action."
+            % (len(paths), _sample([repr(p) for p in paths])))
+
+
+def required_dimension(code: str, message: str, path: Optional[str], base_tree: str,
+                       subject_tree: Optional[str], changed: int) -> dict:
+    """The FAIL of a change that has no report: the report entry is the zero-byte read of `path`."""
+    none = ParsedReport("file", path, hashlib.sha256(b"").hexdigest(), 0, None, [])
+    dim = _dimension(none, FAIL, "%s: see the diagnostic" % code,
+                     [{"code": code, "effect": "fail", "message": message, "where": None}],
+                     subject={"tree": None, "snapshot_tree": subject_tree, "matches": None},
+                     base={"tree": base_tree, "verification": "none", "independently_verified": False,
+                           "changed_paths": changed})
+    dim["validated"] = []
+    return dim
 
 
 def _sample(paths: List[str], limit: int = 5) -> str:

@@ -1863,7 +1863,7 @@ class ResultContractTests(ImpactCase):
             line = "refs/heads/x %s refs/heads/x %s\n" % (self.B, self.A)
             _, pushed, _ = run_cli(["report", "--repo", self.fx.root, "--push-stdin",
                                     "--impact-file", path], stdin=line.encode())
-        self.assertIn("verified against the old tip of the push", pushed)
+        self.assertIn("verified against the base commit (HEAD, or the old tip of the push)", pushed)
         self.assertNotIn("NOT independently verified", pushed)
         self.assertIn("portion architecture: PASS", ok_out)
         self.assertIn("portion decisions: PASS", ok_out)

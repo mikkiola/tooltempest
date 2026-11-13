@@ -75,14 +75,55 @@ A hook should treat any non-zero exit as a block.
 | Exit | Meaning |
 |---|---|
 | 0 | every evaluated check is PASS or N/A |
-| 1 | a violation (FAIL), or a supplied impact report's required assessment is not complete |
+| 1 | a violation (FAIL), a commit or push check that found a changed code path and no impact report, or a report whose assessment is not complete |
 | 2 | no verdict: usage, dependency, I/O, Git, policy or internal error. Never a pass |
 | 3 | SPEC applicability cannot be established. Defined, but no SPEC scope rule produces it any more |
 
 1 takes precedence over 3. The result separates the checked dimension
 (`SPEC_STRUCTURE`) from those it does not assess (`assessed: false`): a PASS
 says only that the SPEC files are structurally valid and classified, nothing
-about tests, review, documentation impact or acceptance.
+about tests, review or acceptance, and about documentation impact unless the
+next section applies.
+
+### When the check says IMPACT_REPORT_REQUIRED
+
+A commit check (`--tree index`) or a push check (`--push-stdin`) that finds a
+changed code path, meaning any changed file that is not Markdown, and no impact
+report for that exact change, fails with `IMPACT_REPORT_REQUIRED` (exit 1). The
+message is an instruction to you. Do this, then repeat the commit or push:
+
+1. Assess the effect of the change on the eight categories: `architecture`,
+   `interfaces`, `failure_behaviour`, `configuration`, `tests`, `decisions`,
+   `acceptance`, `planning_and_operations`.
+2. Update the documents that are affected, or record the reason that none is.
+3. Write the report as JSON to the path in the message, with `base_tree` and
+   `subject_tree` as the message gives them. The path is in the Git directory
+   (`<git common dir>/docops-impact/<base tree>_<subject tree>.json`), so the
+   report is not a tracked file and is never committed. The format is
+   `schemas/docops-impact-report.schema.json` (ADR-0014). For an ordinary change
+   the minimal profile is enough:
+
+   ```json
+   {"schema_version": 1, "mode": "direct_fix",
+    "process": {"spec_skill_invoked": false, "spec_created": false, "plan_created": false},
+    "base_tree": "<from the message>", "subject_tree": "<from the message>", "profile": "minimal",
+    "minimal": {"affected_paths": ["src/a.py"], "reason": "why no full category review is needed",
+                "evidence": ["e1"]},
+    "evidence": [{"id": "e1", "kind": "review", "tree": "<subject tree>", "scope_paths": ["."],
+                  "outcome": "pass", "summary": "what you checked"}]}
+   ```
+
+   `affected_paths` must name every changed path, code and documents alike.
+   The checker proves that the report exists, is bound to this change, covers
+   every changed path and is current, not that the assessment is right.
+
+A report belongs to one exact change. If you stage another change, the tree
+changes and you write a new report; evidence gathered on an older tree that
+covers a changed path is stale (the dimension is SKIP). A change of Markdown
+files only needs no report. `--tree REV` and an explicit `--impact-file` behave
+as ADR-0014 describes. `IMPACT_CLASSIFICATION_FAILED` names changed paths that
+are empty, not valid UTF-8 or hold a control character; rename them.
+`IMPACT_SUBJECT_UNAVAILABLE` means the index has unmerged entries; resolve them.
 
 ### If a commit or push was blocked
 
