@@ -78,6 +78,18 @@ refusal to overwrite, journal recovery, serialisation, the documented
 command-line contract in both output formats), not that any consumer is
 installed correctly. Run it after changes to those paths.
 
+The mutable-read scan (`scripts/check_mutable_reads.py`, ADR-0022) has its own suite:
+
+```bash
+python3 -B -m unittest discover -s tests/mutable_reads -t tests/mutable_reads
+```
+
+It runs the scan on fixtures: a positive and a negative one for each of the seven
+patterns, and neutral rewrites of the two incident shapes. Hygiene cases use
+throwaway repositories. The suite proves that the scan recognizes those fixture shapes;
+`python3 scripts/check_mutable_reads.py --limits` lists what it does not cover.
+The scan of real hook files is run by hand and is not part of CI.
+
 The distribution suite qualifies what consumers receive:
 
 ```bash
@@ -96,7 +108,7 @@ runs. It needs a Git checkout with a HEAD commit. Run it after changes to
 composition paths.
 
 CI (`.github/workflows/checks.yml`, ADR-0016) runs `scripts/check_manifest.py`
-and the three suites above as four independent jobs on pull requests to `main`
+and the four suites above as five independent jobs on pull requests to `main`
 and on pushes to `main`. It is not a required check, and a workflow edit
 is validated locally by running its commands (`tests/distribution/test_workflow.py`
 pins them at text level, it is not a YAML validation).

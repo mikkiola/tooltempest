@@ -2,8 +2,9 @@ name: ToolTempest checks
 
 # ADR-0016 (docs/adr/0016-ci-checks-for-the-distributed-file-set.md): the manifest
 # check and the standard-library test suites that qualify what this repository
-# distributes. Informational: it is not wired into branch protection and no
-# repository setting is changed by this file.
+# distributes (ADR-0022 adds the suite of the mutable-read scan). Informational:
+# it is not wired into branch protection and no repository setting is changed by
+# this file.
 
 on:
   pull_request:
@@ -47,6 +48,17 @@ jobs:
           python-version: '3.14'
       - name: tests/tooling
         run: python3 -B -m unittest discover -s tests/tooling -t tests/tooling
+
+  scan:
+    name: mutable-read scan tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: tests/mutable_reads
+        run: python3 -B -m unittest discover -s tests/mutable_reads -t tests/mutable_reads
 
   distribution:
     name: distributed file set tests

@@ -2,7 +2,7 @@
 
 There is no YAML parser in the standard library, so this is not a validation of the
 workflow and it does not execute it: it pins what the workflow is documented to do
-(its triggers and its four commands) and that every command refers to a file or a
+(its triggers and its five commands) and that every command refers to a file or a
 directory that exists, so that a renamed suite or a moved script cannot leave CI
 pointing at nothing. The workflow's syntax was checked with other parsers when it
 was written (see ADR-0016).
@@ -17,6 +17,7 @@ EXPECTED_COMMANDS = [
     "python3 scripts/check_manifest.py",
     "python3 -B -m unittest discover -s tests/docops -t tests/docops",
     "python3 -B -m unittest discover -s tests/tooling -t tests/tooling",
+    "python3 -B -m unittest discover -s tests/mutable_reads -t tests/mutable_reads",
     "python3 -B -m unittest discover -s tests/distribution -t tests/distribution",
 ]
 

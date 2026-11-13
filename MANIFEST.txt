@@ -8,6 +8,7 @@ schemas/docops-result.schema.json
 schemas/tooling-receipt.schema.json
 schemas/tooling-result.schema.json
 scripts/check_manifest.py
+scripts/check_mutable_reads.py
 scripts/docops.py
 scripts/docops_core/__init__.py
 scripts/docops_core/checks.py

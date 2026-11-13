@@ -142,7 +142,8 @@ four it also holds the reference document below, the consumer contract
 `docs/tooltempest/consumer-contract.md` (the text of the consumer obligation,
 its single source), the universal rules `docs/tooltempest/universal-rules.md`
 (the second file of the contract root), the manifest validator
-`scripts/check_manifest.py` (a maintainer tool), the DocOps checker files and
+`scripts/check_manifest.py` (a maintainer tool), `scripts/check_mutable_reads.py` (a maintainer tool: the
+static scan of ADR-0022; fixtures in `tests/mutable_reads`), the DocOps checker files and
 the tooling bootstrap files above.
 
 ## Reference documentation (added by ADR-0008)
