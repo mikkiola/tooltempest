@@ -48,6 +48,8 @@ EXPECTED = {
     "p6_pos_flag_value.py": {"P6"},
     "p6_pos_comment.py": {"P6"},
     "p6_neg_interp_flag_value.py": set(),
+    "p6_limit_launcher.py": set(),
+    "p6_limit_comma_in_string.py": set(),
     "p7_pos.py": {"P7"},
     "p7_neg.py": set(),
     "p7_pos_path_name.py": {"P7"},
@@ -155,7 +157,8 @@ class ContractTests(unittest.TestCase):
             self.assertIn(needle, out.lower())
         # the suppressions and exemptions that narrow the patterns are disclosed, with their real triggers
         for needle in ("`hashlib` or `sha256`", "`.digest(`", "exempt from P1 and P2", "first later line", "node_modules",
-                       "core.fsmonitor", "a program on PATH", "`--allow` hides a finding"):
+                       "core.fsmonitor", "a program on PATH", "`--allow` hides a finding", "launcher",
+                       "interpreter held in a variable", "a comma or a `#` inside a quoted element"):
             self.assertIn(needle, out)
 
     def test_the_scan_changes_nothing_it_inspects(self):
@@ -250,6 +253,12 @@ class AllowTests(unittest.TestCase):
         self.assertEqual({a["pattern"] for a in data["allowed"]}, {"P4"})
         self.assertTrue(all(a["reason"] and {"path", "line", "message"} <= set(a) for a in data["allowed"]))
         self.assertEqual(data["unused_allow"], ["P1:nowhere.py"])
+
+    def test_overlapping_entries_are_all_counted_as_used(self):
+        code, out, _ = scan("--allow", "P4:p4_pos.py:first reason", "--allow", "P4:fixtures/p4_pos.py:second reason",
+                            FIXTURES / "p4_pos.py")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("matched no finding", out)
 
     def test_without_the_option_nothing_is_allowed(self):
         code, out, _ = scan(FIXTURES / "p4_pos.py")

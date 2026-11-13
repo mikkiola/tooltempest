@@ -108,9 +108,10 @@ LIMITS = """Forms the scan does not cover (not covered; a clean result says noth
   an optional interpreter named `sys.executable`, `python*`, `bash`, `sh` or `zsh` (and the flags and flag values after
   it). It does not recognize: a launcher (`uv run x.py`), an interpreter held in a variable (`[python_bin, tool]`
   reports `python_bin`), an element that is a call, a subscript or an f-string, a list closed by a `]` inside an
-  element, and a plain string that is not a file name (a program on PATH, such as `git`, is not a pinned file)
-- `--allow` hides a finding of that pattern from the exit code in every scanned file whose path ends with the given
-  path suffix; an entry that matches nothing is printed, a duplicate entry is a usage error
+  element, a comma or a `#` inside a quoted element, and a plain string that is not a file name (a program on PATH,
+  such as `git`, is not a pinned file)
+- `--allow` hides a finding of that pattern from the exit code in every scanned file whose path equals the given path
+  suffix or ends with "/" and that suffix; an entry that matches nothing is printed, a duplicate entry is a usage error
 - a mention of `hashlib` or `sha256` anywhere in a file suppresses P4 for that file; a mention of `sha256`,
   `hexdigest`, `.digest(` or `blob` anywhere in a file suppresses P7 for that file
 - a line that starts with echo, printf or print, or that holds the word `git` followed by a Git read word (cat-file,
@@ -405,15 +406,14 @@ def main(argv: Optional[List[str]] = None) -> int:
             findings.extend(scan_text(str(f), f.read_text(encoding="utf-8", errors="replace")))
         except OSError as exc:
             errors.append("%s: %s" % (f, exc))
-    def allowed_by(f: Finding) -> Optional[Tuple[str, str]]:
-        for (pattern, suffix) in allow:
-            if f.pattern == pattern and (f.path == suffix or f.path.endswith("/" + suffix)):
-                return (pattern, suffix)
-        return None
+    def matching(f: Finding) -> List[Tuple[str, str]]:
+        return [(pattern, suffix) for (pattern, suffix) in allow
+                if f.pattern == pattern and (f.path == suffix or f.path.endswith("/" + suffix))]
 
-    allowed = [(f, allow[allowed_by(f)]) for f in findings if allowed_by(f)]
-    unused = sorted("%s:%s" % key for key in allow if not any(allowed_by(f) == key for f in findings))
-    findings = [f for f in findings if not allowed_by(f)]
+    allowed = [(f, allow[matching(f)[0]]) for f in findings if matching(f)]
+    used = {key for f in findings for key in matching(f)}
+    unused = sorted("%s:%s" % key for key in allow if key not in used)
+    findings = [f for f in findings if not matching(f)]
     hyg: List[dict] = []
     for clone in args.clone:
         hyg.extend(hygiene(clone, errors))
