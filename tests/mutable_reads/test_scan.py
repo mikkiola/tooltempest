@@ -3,7 +3,7 @@ executables from a mutable location.
 
 Every pattern P1 to P7 has a positive fixture (the scan must report exactly that pattern) and a negative
 fixture (the scan must report nothing). The incident fixtures are neutral rewrites of the shapes found in the
-two incidents; they carry no real path or account name. The scan is a heuristic over lines: these tests state
+two incidents and in the audit that followed (a guard that imports its siblings from its own directory); they carry no real path or account name. The scan is a heuristic over lines: these tests state
 what it recognizes, not that it recognizes every form. `--limits` prints the forms it does not cover.
 """
 import ast
@@ -146,6 +146,10 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(code, 0)
         for needle in ("interpreter", "variable", "not covered"):
             self.assertIn(needle, out.lower())
+        # the suppressions and exemptions that narrow the patterns are disclosed, with their real triggers
+        for needle in ("`hashlib` or `sha256`", "`.digest(`", "exempt from P1 and P2", "first later line", "node_modules",
+                       "core.fsmonitor"):
+            self.assertIn(needle, out)
 
     def test_the_scan_changes_nothing_it_inspects(self):
         def digest():

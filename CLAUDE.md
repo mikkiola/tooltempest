@@ -85,7 +85,8 @@ python3 -B -m unittest discover -s tests/mutable_reads -t tests/mutable_reads
 ```
 
 It runs the scan on fixtures: a positive and a negative one for each of the seven
-patterns, and neutral rewrites of the two incident shapes. Hygiene cases use
+patterns, and neutral rewrites of the shapes found in the two incidents and in the audit that followed (a guard that imports its
+siblings from its own directory). Hygiene cases use
 throwaway repositories. The suite proves that the scan recognizes those fixture shapes;
 `python3 scripts/check_mutable_reads.py --limits` lists what it does not cover.
 The scan of real hook files is run by hand and is not part of CI.

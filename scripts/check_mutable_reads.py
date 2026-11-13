@@ -92,12 +92,23 @@ LIMITS = """Forms the scan does not cover (not covered; a clean result says noth
 - a race between the check and the run (the file changes after it was hashed)
 - an interpreter executing a file through a wrapper (make, npm scripts, a launcher)
 - P6 ignores the leading root variable of a path, so `$A/scripts/x.py` and `$B/scripts/x.py` count as the same
-- the mere mention of sha256, hexdigest or a blob anywhere in a file suppresses P4 and P7 for that file
+- a mention of `hashlib` or `sha256` anywhere in a file suppresses P4 for that file; a mention of `sha256`,
+  `hexdigest`, `.digest(` or `blob` anywhere in a file suppresses P7 for that file
+- a line that starts with echo, printf or print, or that holds the word `git` followed by a Git read word (cat-file,
+  show, ls-tree, rev-parse, rev-list, log, status, worktree, diff, ls-files, for-each-ref), or `ObjectStore`, is
+  exempt from P1 and P2
+- P3 stops looking at the first later line that mentions the resolved variable together with a hash word, whether or
+  not that hash is compared
+- P7 needs, on one line, `file_path`, `filepath` or `path`, a comparison (`==`, `!=` or `in`), and a constant whose
+  name contains RULES, NORMATIVE, PINNED, DOC or DOCS
 - a clone path built without a recognizable home, workspace or cache literal (os.path.join of parts)
 - a resolver whose name is not resolve_/find_/locate_/discover_/lookup_
 - docstrings and string literals are scanned as code, so prose that quotes a pattern is reported
-- any language other than shell and Python; any file that is not a .py/.sh/.bash/.zsh file or an
-  extensionless file with a shebang
+- any language other than shell and Python. A directory walk reads only .py/.sh/.bash/.zsh files and extensionless
+  files with a shebang, and skips .git, node_modules, __pycache__, .venv and venv; a file named on the command line is
+  always read
+- the hygiene check disables only the `core.fsmonitor` program of the clone; a clean filter or another program that the
+  clone's own configuration names can still start
 The scan finds shapes. It does not prove that a file reads only pinned content."""
 
 

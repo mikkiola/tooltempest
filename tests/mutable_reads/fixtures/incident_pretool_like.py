@@ -1,4 +1,4 @@
-"""Shape of the third finding: a guard imports its sibling modules from the directory it sits in."""
+"""Shape found by the audit after the two incidents: a guard imports its sibling modules from the directory it sits in."""
 import os
 import sys
 
