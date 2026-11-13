@@ -89,7 +89,8 @@ patterns, and neutral rewrites of the shapes found in the two incidents and in t
 siblings from its own directory). Hygiene cases use
 throwaway repositories. The suite proves that the scan recognizes those fixture shapes;
 `python3 scripts/check_mutable_reads.py --limits` lists what it does not cover.
-The scan of real hook files is run by hand and is not part of CI.
+The scan of real hook files is run by hand and is not part of CI. `--allow PATTERN:FILENAME:REASON` excludes a
+reasoned finding from the exit code; the finding is still printed, with its reason.
 
 The distribution suite qualifies what consumers receive:
 

@@ -5,7 +5,7 @@ The defect class: a tool reads a rule document or runs a checker from a place th
 the commit pinned in the lock (a local clone, the main worktree, the directory a script happens to sit
 in), or it judges a read by its path instead of its bytes.
 
-    check_mutable_reads.py [--format text|json] [--clone DIR]... PATH...
+    check_mutable_reads.py [--format text|json] [--clone DIR]... [--allow PATTERN:PATHSUFFIX:REASON]... PATH...
     check_mutable_reads.py --limits
 
 The scan is a bounded heuristic over lines of shell and Python files. It recognizes seven patterns
@@ -21,9 +21,16 @@ and nothing else. A clean result means "none of these seven shapes was found", n
         (`sys.path` or `spec_from_file_location` built from `__file__`), in a file without any hash
         check.
     P5  A lookup of a `scripts/` file through `--git-common-dir`, `dirname` of it, or the main worktree.
-    P6  A hash is computed, but of a different path than the one that is executed.
+    P6  A hash is computed, but of a different path than the one that is executed. In Python only the
+        file a `subprocess` list runs counts (a variable, or a `.py`/`.sh`/`scripts/` string, after an
+        interpreter if there is one); a program found on PATH, such as `git`, is not a pinned file.
     P7  A gate that compares the path of a read with a constant normative path, in a file without any
         content comparison.
+
+`--allow PATTERN:PATHSUFFIX:REASON` is an explicit exclusion: findings of that pattern in files whose path equals
+PATHSUFFIX or ends with `/PATHSUFFIX` are printed as `allowed`, with the reason, counted apart, and do not change
+the exit code. A blank reason, an unknown pattern, an empty path suffix or a repeated PATTERN:PATHSUFFIX is a usage
+error (exit 2); an entry that matches no finding is reported. Nothing is excluded unless the caller names it.
 
 `--clone DIR` adds hygiene lines: a clone that is dirty, detached, or behind its cached upstream ref.
 A hygiene warning never changes the exit code. The check runs only local Git reads, with the
@@ -36,6 +43,7 @@ unreadable path, a `--clone` that is not a repository). Standard library only; n
 from __future__ import annotations
 
 import argparse
+import bisect
 import json
 import os
 import re
@@ -80,7 +88,11 @@ BASH_HASHED = re.compile(r"""(?:shasum|sha256sum)\s+(?:-\w+\s+(?:\d+\s+)?)*("[^"
 BASH_EXEC = re.compile(r"""\b(?:python3?|bash|sh|zsh|source|exec)\s+(?:-[BIEsSuvx]+\s+)*("[^"]*"|'[^']*'|[^\s|<>;&)]+)""")
 PY_HASHED = re.compile(r"""(?:sha256\w*|hash_file|file_sha256|digest\w*)\(\s*(?:Path\(|open\()?\s*([A-Za-z_][\w.]*)""")
 PY_SUBPROCESS_LIST = re.compile(r"""subprocess\.\w+\(\s*\[([^\]]*)\]""")
-PY_STOP = {"sys", "executable", "str", "os", "path", "Path", "python3", "python"}
+PY_INTERPRETERS = {"sys.executable", "python", "python3", "bash", "sh", "zsh"}
+PY_INTERP_BASE = re.compile(r"python[\d.]*|bash|sh|zsh")
+PY_FLAG = re.compile(r"""["']-[\w-]+["']""")
+PY_NAME = re.compile(r"[A-Za-z_][\w.]*")
+PY_STRING = re.compile(r"""["']([^"']+)["']""")
 
 LIMITS = """Forms the scan does not cover (not covered; a clean result says nothing about them):
 - a path built by an interpreter or a program (python -c, perl, node, awk) instead of a shell or Python line
@@ -92,6 +104,13 @@ LIMITS = """Forms the scan does not cover (not covered; a clean result says noth
 - a race between the check and the run (the file changes after it was hashed)
 - an interpreter executing a file through a wrapper (make, npm scripts, a launcher)
 - P6 ignores the leading root variable of a path, so `$A/scripts/x.py` and `$B/scripts/x.py` count as the same
+- P6 takes as the executed file of a Python `subprocess` list the first variable or `.py`/`.sh`/`scripts/` string after
+  an optional interpreter named `sys.executable`, `python*`, `bash`, `sh` or `zsh` (and the flags and flag values after
+  it). It does not recognize: a launcher (`uv run x.py`), an interpreter held in a variable (`[python_bin, tool]`
+  reports `python_bin`), an element that is a call, a subscript or an f-string, a list closed by a `]` inside an
+  element, and a plain string that is not a file name (a program on PATH, such as `git`, is not a pinned file)
+- `--allow` hides a finding of that pattern from the exit code in every scanned file whose path ends with the given
+  path suffix; an entry that matches nothing is printed, a duplicate entry is a usage error
 - a mention of `hashlib` or `sha256` anywhere in a file suppresses P4 for that file; a mention of `sha256`,
   `hexdigest`, `.digest(` or `blob` anywhere in a file suppresses P7 for that file
 - a line that starts with echo, printf or print, or that holds the word `git` followed by a Git read word (cat-file,
@@ -134,6 +153,29 @@ def _norm_word(word: str) -> str:
     word = word.strip().strip("\"'")
     word = re.sub(r"\$\{(\w+)\}", r"$\1", word)
     return re.sub(r"^\$\w+/", "", word)
+
+
+def _py_exec_target(inner: str) -> Optional[str]:
+    """The file a Python `subprocess` list runs. After an interpreter (`sys.executable`, `python3`, `/usr/bin/python3`,
+    `bash`, ...) it is the first element that is not a flag, a flag's value or a plain string; without one it is the
+    first element. A variable counts (a leading `*` is dropped); a string counts only when it looks like a file
+    (`.py`, `.sh`, `scripts/`); a plain string such as "git" is a program on PATH, not a pinned file."""
+    elems = [e.strip() for e in inner.split(",") if e.strip()]
+    interp = bool(elems) and (elems[0].strip("\"'") in PY_INTERPRETERS or PY_INTERP_BASE.fullmatch(elems[0].strip("\"'").rsplit("/", 1)[-1]))
+    for e in elems[1 if interp else 0:]:
+        if PY_FLAG.fullmatch(e):
+            continue
+        name = e.lstrip("*")
+        if PY_NAME.fullmatch(name):
+            return name
+        q = PY_STRING.fullmatch(e)
+        if q is None:
+            return None  # a call, a subscript, an f-string: not recognized
+        if q.group(1).endswith((".py", ".sh")) or "scripts/" in q.group(1):
+            return q.group(1)
+        if not interp:
+            return None  # a program found on PATH
+    return None
 
 
 def scan_text(path: str, text: str) -> List[Finding]:
@@ -243,10 +285,17 @@ def scan_text(path: str, text: str) -> List[Finding]:
             w = _norm_word(m.group(1))
             if w.startswith("$") or w.endswith((".py", ".sh")) or "scripts/" in w:
                 executed.append((n, w, l))
-        for m in PY_SUBPROCESS_LIST.finditer(l):
-            for tok in re.findall(r"[A-Za-z_]\w*", m.group(1)):
-                if tok not in PY_STOP:
-                    executed.append((n, tok, l))
+    code_lines = dict(code)
+    starts, pos = [], 0
+    for chunk in text.splitlines(keepends=True):  # the same line numbering as `lines`
+        starts.append(pos)
+        pos += len(chunk)
+    for m in PY_SUBPROCESS_LIST.finditer(text):  # a list may span several lines
+        n = bisect.bisect_right(starts, m.start())
+        target = _py_exec_target(re.sub(r"(?m)(?:^|\s)#[^\n]*", "", m.group(1)))
+        if n in code_lines and target is not None:
+            executed.append((n, target, code_lines[n]))
+    executed.sort(key=lambda e: e[0])
     if hashed and executed and not any(w in hashed for _, w, _ in executed):
         n, w, l = executed[0]
         add(n, "P6", "a hash is computed (%s) but not of the executed path (%s)" % (", ".join(sorted(hashed)), w), l)
@@ -329,6 +378,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("paths", nargs="*", metavar="PATH")
     ap.add_argument("--format", choices=("text", "json"), default="text")
     ap.add_argument("--clone", action="append", default=[], metavar="DIR")
+    ap.add_argument("--allow", action="append", default=[], metavar="PATTERN:PATHSUFFIX:REASON",
+                    help="exclude findings of PATTERN in files whose path ends with PATHSUFFIX, with a reason (listed, not hidden)")
     ap.add_argument("--limits", action="store_true", help="print the forms the scan does not cover and exit")
     args = ap.parse_args(argv)
     if args.limits:
@@ -336,6 +387,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
     if not args.paths:
         ap.error("at least one PATH is required")
+    allow: Dict[Tuple[str, str], str] = {}
+    for spec in args.allow:
+        pattern, _, rest = spec.partition(":")
+        suffix, _, reason = rest.partition(":")
+        suffix = suffix.strip("/")
+        if pattern not in ("P%d" % n for n in range(1, 8)) or not suffix or not reason.strip():
+            ap.error("--allow needs PATTERN:PATHSUFFIX:REASON with a pattern P1..P7, a path suffix and a reason: %r" % spec)
+        if (pattern, suffix) in allow:
+            ap.error("--allow given twice for %s:%s" % (pattern, suffix))
+        allow[(pattern, suffix)] = reason.strip()
 
     errors: List[str] = []
     findings: List[Finding] = []
@@ -344,18 +405,35 @@ def main(argv: Optional[List[str]] = None) -> int:
             findings.extend(scan_text(str(f), f.read_text(encoding="utf-8", errors="replace")))
         except OSError as exc:
             errors.append("%s: %s" % (f, exc))
+    def allowed_by(f: Finding) -> Optional[Tuple[str, str]]:
+        for (pattern, suffix) in allow:
+            if f.pattern == pattern and (f.path == suffix or f.path.endswith("/" + suffix)):
+                return (pattern, suffix)
+        return None
+
+    allowed = [(f, allow[allowed_by(f)]) for f in findings if allowed_by(f)]
+    unused = sorted("%s:%s" % key for key in allow if not any(allowed_by(f) == key for f in findings))
+    findings = [f for f in findings if not allowed_by(f)]
     hyg: List[dict] = []
     for clone in args.clone:
         hyg.extend(hygiene(clone, errors))
 
     if args.format == "json":
-        print(json.dumps({"findings": [f.as_dict() for f in findings], "hygiene": hyg, "errors": errors}, indent=2))
+        print(json.dumps({"findings": [f.as_dict() for f in findings],
+                          "allowed": [dict(f.as_dict(), reason=why) for f, why in allowed],
+                          "unused_allow": unused,
+                          "hygiene": hyg, "errors": errors}, indent=2))
     else:
         for f in findings:
             print("%s:%d: %s: %s" % (f.path, f.line, f.pattern, f.message))
+        for f, why in allowed:
+            print("%s:%d: allowed %s: %s [reason: %s]" % (f.path, f.line, f.pattern, f.message, why))
+        for u in unused:
+            print("allow entry matched no finding: %s" % u)
         for h in hyg:
             print("hygiene: %s: %s: %s" % (h["kind"], h["repo"], h["detail"]))
-        print("%d finding(s), %d hygiene warning(s)" % (len(findings), len(hyg)))
+        extra = ", %d allowed" % len(allowed) if allowed else ""
+        print("%d finding(s)%s, %d hygiene warning(s)" % (len(findings), extra, len(hyg)))
     for e in errors:
         print("error: " + e, file=sys.stderr)
     if errors:

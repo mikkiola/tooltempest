@@ -41,6 +41,13 @@ EXPECTED = {
     "p5_neg.sh": set(),
     "p6_pos.sh": {"P6"},
     "p6_neg.sh": set(),
+    "p6_neg_git.py": set(),
+    "p6_pos.py": {"P6"},
+    "p6_pos_multiline.py": {"P6"},
+    "p6_pos_star_popen.py": {"P6"},
+    "p6_pos_flag_value.py": {"P6"},
+    "p6_pos_comment.py": {"P6"},
+    "p6_neg_interp_flag_value.py": set(),
     "p7_pos.py": {"P7"},
     "p7_neg.py": set(),
     "p7_pos_path_name.py": {"P7"},
@@ -148,7 +155,7 @@ class ContractTests(unittest.TestCase):
             self.assertIn(needle, out.lower())
         # the suppressions and exemptions that narrow the patterns are disclosed, with their real triggers
         for needle in ("`hashlib` or `sha256`", "`.digest(`", "exempt from P1 and P2", "first later line", "node_modules",
-                       "core.fsmonitor"):
+                       "core.fsmonitor", "a program on PATH", "`--allow` hides a finding"):
             self.assertIn(needle, out)
 
     def test_the_scan_changes_nothing_it_inspects(self):
@@ -178,6 +185,89 @@ class ContractTests(unittest.TestCase):
         self.assertFalse(constants & {"fetch", "pull", "push", "clone", "ls-remote", "remote", "submodule"})
         imported = {a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
         self.assertFalse(imported & {"socket", "urllib", "http", "ssl"})
+
+
+class AllowTests(unittest.TestCase):
+    """`--allow PATTERN:PATHSUFFIX:REASON` is an explicit, reasoned exclusion. It hides nothing silently: the
+    allowed finding is still printed with its reason, counted apart, and does not change the exit code."""
+
+    ALLOW = "P4:p4_pos.py:installed together with its siblings in one directory"
+
+    def test_an_allowed_finding_is_listed_with_its_reason_and_does_not_change_the_exit_code(self):
+        code, out, err = scan("--allow", self.ALLOW, FIXTURES / "p4_pos.py")
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(ids_of(out), set())
+        self.assertIn("allowed P4", out)
+        self.assertIn("installed together with its siblings in one directory", out)
+        self.assertIn("0 finding(s), 1 allowed, 0 hygiene warning(s)", out)
+
+    def test_the_exclusion_is_limited_to_its_pattern_and_its_file(self):
+        # another pattern in the same file still reports
+        code, out, _ = scan("--allow", "P1:incident_gate_like.py:accepted for this test", FIXTURES / "incident_gate_like.py")
+        self.assertEqual((code, ids_of(out)), (1, {"P7"}))
+        # the same pattern in another file still reports
+        code, out, _ = scan("--allow", self.ALLOW, FIXTURES / "p4_pos.py", FIXTURES / "incident_pretool_like.py")
+        self.assertEqual((code, ids_of(out)), (1, {"P4"}))
+        self.assertTrue(any(line.split(":")[0].endswith("incident_pretool_like.py") for line in out.splitlines() if FINDING.match(line)))
+
+    def test_a_path_suffix_separates_two_files_with_the_same_base_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for sub in ("one", "two"):
+                os.makedirs(Path(tmp, sub))
+                shutil.copy(FIXTURES / "p4_pos.py", Path(tmp, sub, "guard.py"))
+            code, out, _ = scan("--allow", "P4:one/guard.py:the first copy is reviewed", tmp)
+            self.assertEqual(code, 1, out)
+            lines = [line for line in out.splitlines() if FINDING.match(line)]
+            self.assertTrue(lines and all("/two/guard.py" in line for line in lines), out)
+            self.assertIn("/one/guard.py", "".join(line for line in out.splitlines() if "allowed P4" in line))
+            # a bare base name is a suffix too: it covers both copies, and says so by listing both as allowed
+            code, out, _ = scan("--allow", "P4:guard.py:both copies are reviewed", tmp)
+            self.assertEqual(code, 0, out)
+            self.assertIn("/one/guard.py", out)
+            self.assertIn("/two/guard.py", out)
+
+    def test_a_suffix_matches_whole_path_components_only(self):
+        code, out, _ = scan("--allow", "P4:4_pos.py:partial name", FIXTURES / "p4_pos.py")
+        self.assertEqual((code, ids_of(out)), (1, {"P4"}))
+        self.assertIn("allow entry matched no finding: P4:4_pos.py", out)
+
+    def test_a_missing_or_blank_reason_an_unknown_pattern_an_empty_suffix_or_a_repeated_entry_is_a_usage_error(self):
+        for bad in (["P4:p4_pos.py"], ["P4:p4_pos.py:"], ["P4:p4_pos.py:   "], ["P9:p4_pos.py:why"], [":p4_pos.py:why"],
+                    ["P4::why"], ["P4:/:why"], ["P4:p4_pos.py:why", "P4:p4_pos.py:another why"]):
+            with self.subTest(allow=bad):
+                args = []
+                for a in bad:
+                    args += ["--allow", a]
+                code, out, err = scan(*args, FIXTURES / "p4_pos.py")
+                self.assertEqual(code, 2, out + err)
+                self.assertEqual(ids_of(out), set())
+
+    def test_json_output_lists_allowed_findings_apart_from_findings(self):
+        code, out, _ = scan("--format", "json", "--allow", self.ALLOW, "--allow", "P1:nowhere.py:unused", FIXTURES / "p4_pos.py")
+        self.assertEqual(code, 0)
+        data = json.loads(out)
+        self.assertEqual(data["findings"], [])
+        self.assertEqual({a["pattern"] for a in data["allowed"]}, {"P4"})
+        self.assertTrue(all(a["reason"] and {"path", "line", "message"} <= set(a) for a in data["allowed"]))
+        self.assertEqual(data["unused_allow"], ["P1:nowhere.py"])
+
+    def test_without_the_option_nothing_is_allowed(self):
+        code, out, _ = scan(FIXTURES / "p4_pos.py")
+        self.assertEqual((code, ids_of(out)), (1, {"P4"}))
+        self.assertNotIn("allowed P4", out)
+
+
+class LineNumberTests(unittest.TestCase):
+    def test_a_form_feed_before_a_multi_line_call_does_not_shift_the_reported_line(self):
+        src = ("import hashlib\nimport subprocess\n\x0c\n"
+               "hashlib.sha256(checker)\n"
+               "subprocess.run([sys.executable,\n    tool])\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp, "m.py")
+            f.write_text(src)
+            code, out, _ = scan(f)
+            self.assertEqual(code, 1, out)
+            self.assertRegex(out, r"m\.py:6: P6: ")  # the `subprocess.run(` line, counted as splitlines counts
 
 
 class HygieneTests(unittest.TestCase):
