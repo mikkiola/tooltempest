@@ -18,7 +18,9 @@ when both apply). See docs/adr/0013,
 docs/adr/0014 and schemas/docops-result.schema.json.
 
 The checker writes nothing: no files (bytecode caching is disabled
-below), no index, config, refs or objects, no network. Its own Git calls
+below), no index, config, refs or objects. Its Git calls run with every network
+protocol denied (`GIT_ALLOW_PROTOCOL=none`), so a missing object of a partial clone is
+an error and is never fetched. They also
 pass `-c core.fsmonitor=false`, so reading the index (`--tree index`) never
 runs the `core.fsmonitor` program or starts the daemon it names, whichever
 configuration level sets it; the hook flow around the checker is not covered.

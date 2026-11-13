@@ -9,7 +9,7 @@ import unittest
 from unittest import mock
 
 from helpers import (DocopsTestCase, GOOD_SPEC, GitFixture, IDLE_SPEC, load_result_schema,
-                     validate)
+                     run_check_json, validate)
 
 from docops_core import checks, gitstate, specparse
 from docops_core.gitstate import GitError
@@ -745,9 +745,9 @@ class CheckerFailureTests(DocopsTestCase):
         with mock.patch.object(gitstate, "_run", flaky):
             self.assertError(check(self.fx, "HEAD"))
 
-    def test_git_environment_disables_locks_and_sets_the_lazy_fetch_variable(self):
-        # GIT_NO_LAZY_FETCH=1 is only asserted as set: it does not stop a promisor
-        # fetch (git 2.44.0); GIT_ALLOW_PROTOCOL=none does, and the checker does not set it.
+    def test_git_environment_disables_locks_and_every_network_protocol(self):
+        # GIT_ALLOW_PROTOCOL=none is what stops a promisor fetch (git 2.44.0, see
+        # PromisorCloneTests); GIT_NO_LAZY_FETCH=1 is set as well but does not stop it.
         seen = []
         real = gitstate.subprocess.run
 
@@ -762,10 +762,12 @@ class CheckerFailureTests(DocopsTestCase):
         for env in seen:
             self.assertEqual(env["GIT_OPTIONAL_LOCKS"], "0")
             self.assertEqual(env["GIT_NO_LAZY_FETCH"], "1")
+            self.assertEqual(env["GIT_ALLOW_PROTOCOL"], "none")
             self.assertEqual(env["GIT_NO_REPLACE_OBJECTS"], "1")
             self.assertEqual(env["GIT_TERMINAL_PROMPT"], "0")
 
-    def test_checker_never_opens_a_socket(self):
+    def test_checker_process_opens_no_socket(self):
+        # Covers this process only; a child git process is covered by PromisorCloneTests.
         import socket
 
         def forbidden(*args, **kwargs):
@@ -782,6 +784,38 @@ class CheckerFailureTests(DocopsTestCase):
             self.assertEqual(result["checks"][name], {
                 "assessed": False, "reason": result["checks"][name]["reason"]}, name)
             self.assertNotIn("status", result["checks"][name], name)
+
+
+class PromisorCloneTests(DocopsTestCase):
+    """In a partial (promisor) clone, a missing object makes git fetch from the remote. The checker runs
+    every git call with all network protocols denied, so the object stays missing and the result is a
+    tool error, never a PASS. The remote is a local `file://` repository."""
+
+    def test_a_missing_object_stays_missing_and_the_result_is_a_tool_error(self):
+        with GitFixture() as seed:
+            seed.commit_files({"SPEC.md": GOOD_SPEC}, "one")
+            origin = os.path.join(os.path.dirname(seed.root), "origin.git")
+            seed.git("clone", "-q", "--bare", seed.root, origin)
+            for key, value in (("uploadpack.allowFilter", "true"), ("uploadpack.allowAnySHA1InWant", "true")):
+                seed.git("-C", origin, "config", key, value)
+            partial = os.path.join(os.path.dirname(seed.root), "partial")
+            seed.git("clone", "-q", "--no-checkout", "--filter=blob:none", "file://" + origin, partial)
+            blob = seed.git("rev-parse", "HEAD:SPEC.md")
+
+            def missing():
+                return seed.git("-C", partial, "rev-list", "--objects", "--missing=print", "HEAD").split()
+
+            self.assertIn("?" + blob, missing())  # before: the SPEC blob is not in the clone
+            code, result, _ = run_check_json(["--repo", partial, "--tree", "HEAD"])
+            self.assertEqual(code, 2, result)
+            self.assertIsNone(result["summary"]["status"])
+            self.assertIsNotNone(result["snapshots"][0]["error"])
+            self.assertIn("?" + blob, missing())  # after: still missing, nothing was fetched
+            self.assertIn("not allowed", result["snapshots"][0]["error"]["message"])  # the protocol was refused
+            self.assertValidResult(result)
+            # control: without the denial the same clone does fetch the blob, so the refusal above is the cause
+            seed.git("-C", partial, "cat-file", "blob", blob)
+            self.assertNotIn("?" + blob, missing())
 
 
 class AggregationTests(DocopsTestCase):

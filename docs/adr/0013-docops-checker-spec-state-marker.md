@@ -71,7 +71,9 @@ structural element for the consumers, not an existing one.
 
 Constraints: standard-library Python only; no project-specific
 directories or fabricated SPEC canon inside ToolTempest; no mutation,
-network or model call when a check runs; consumers are not migrated and
+network or model call when a check runs (every Git call runs with network
+protocols denied, so a missing object of a partial clone is an error and is
+never fetched); consumers are not migrated and
 no lock is repinned in this stage.
 
 ## Decision
@@ -262,9 +264,9 @@ no lock is repinned in this stage.
    (all-zero OID) is N/A with an explicit reason. Annotated tags are
    peeled; non-commit objects, unknown names and unmerged or non-regular
    SPEC entries are never PASS. Git runs with optional locks disabled,
-   `GIT_NO_LAZY_FETCH=1` set (it does not stop a promisor fetch;
-   `GIT_ALLOW_PROTOCOL=none` does, and the checker does not set it) and a
-   timeout; the script disables bytecode caching.
+   `GIT_ALLOW_PROTOCOL=none` (every transport is refused, so a promisor
+   fetch fails; `GIT_NO_LAZY_FETCH=1` is set too but does not stop it) and
+   a timeout; the script disables bytecode caching.
 9. **Status vocabulary and the error contract.** Every per-check status
    is exactly one of PASS, FAIL, SKIP, N/A, as in the approved Stage 0
    contract; no fifth value exists anywhere in the result. The result

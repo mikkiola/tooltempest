@@ -46,7 +46,7 @@ A change here changes no consumer until that consumer repins.
 - `scripts/docops.py` — read-only `check` / `report` of an exact Git snapshot
   (`--tree index|<commit>`, `--push-stdin`), optionally validating an
   impact report that a reviewer wrote (`--impact-file PATH|-`); never
-  writes, stages, commits, pushes or uses the network
+  writes, stages, commits or pushes, and runs every Git call with network protocols denied
 - `scripts/docops_core/` — the standard-library package behind it
 - `schemas/docops-result.schema.json`, `schemas/docops-policy.schema.json`,
   `schemas/docops-impact-report.schema.json`

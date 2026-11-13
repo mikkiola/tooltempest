@@ -25,7 +25,7 @@ project's hook files for the actual commands. `check` prints one JSON
 result; `report` takes the same arguments and prints the same result as text,
 which is easier to read when a hook blocks. The checker reads an exact Git
 snapshot (the index, a commit, or each pushed commit) and never the working
-tree. It writes nothing: no files, no staging, no commit, no network. In
+tree. It writes nothing: no files, no staging, no commit. Its Git calls run with every network protocol denied, so an object missing from a partial clone is an error, never fetched. In
 particular it writes no run record: it produces no `.tempest/runs/` record.
 
 ### Which SPEC files it evaluates

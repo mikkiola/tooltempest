@@ -2,8 +2,8 @@
 
 Pure, read-only building blocks behind scripts/docops.py: Git snapshot
 access, SPEC parsing, the SPEC-state policy, and the versioned result
-format. Nothing in this package writes files, stages, commits, pushes,
-or touches the network.
+format. Nothing in this package writes files, stages, commits or pushes,
+and every Git call runs with network protocols denied (see gitstate.py).
 """
 
 TOOL_NAME = "docops"
