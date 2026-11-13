@@ -745,7 +745,9 @@ class CheckerFailureTests(DocopsTestCase):
         with mock.patch.object(gitstate, "_run", flaky):
             self.assertError(check(self.fx, "HEAD"))
 
-    def test_git_environment_forbids_locks_and_lazy_fetch(self):
+    def test_git_environment_disables_locks_and_sets_the_lazy_fetch_variable(self):
+        # GIT_NO_LAZY_FETCH=1 is only asserted as set: it does not stop a promisor
+        # fetch (git 2.44.0); GIT_ALLOW_PROTOCOL=none does, and the checker does not set it.
         seen = []
         real = gitstate.subprocess.run
 

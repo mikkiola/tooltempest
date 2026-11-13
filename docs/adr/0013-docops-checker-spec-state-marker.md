@@ -261,8 +261,10 @@ no lock is repinned in this stage.
    each tuple's local field must be a full hexadecimal OID; a deleted ref
    (all-zero OID) is N/A with an explicit reason. Annotated tags are
    peeled; non-commit objects, unknown names and unmerged or non-regular
-   SPEC entries are never PASS. Git runs with optional locks and lazy
-   fetch disabled and a timeout; the script disables bytecode caching.
+   SPEC entries are never PASS. Git runs with optional locks disabled,
+   `GIT_NO_LAZY_FETCH=1` set (it does not stop a promisor fetch;
+   `GIT_ALLOW_PROTOCOL=none` does, and the checker does not set it) and a
+   timeout; the script disables bytecode caching.
 9. **Status vocabulary and the error contract.** Every per-check status
    is exactly one of PASS, FAIL, SKIP, N/A, as in the approved Stage 0
    contract; no fifth value exists anywhere in the result. The result

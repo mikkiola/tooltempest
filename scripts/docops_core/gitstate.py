@@ -2,10 +2,16 @@
 
 Every function here only reads Git objects or the index, never the
 working tree, and never writes: no staging, no refs, no config, no
-`git write-tree` (which would add objects), no network (lazy fetch is
-disabled), and `GIT_OPTIONAL_LOCKS=0` so Git does not opportunistically
-refresh the index. A Git failure raises GitError; it is never turned
-into an empty snapshot.
+`git write-tree` (which would add objects), no network command of its own,
+and `GIT_OPTIONAL_LOCKS=0` so Git does not opportunistically refresh the
+index. A Git failure raises GitError; it is never turned into an empty
+snapshot.
+
+The environment also sets `GIT_NO_LAZY_FETCH=1`, but that variable does not
+stop a promisor (partial) clone from fetching a missing object (git 2.44.0,
+shown in a scratch clone); `GIT_ALLOW_PROTOCOL=none` does, and this module
+does not set it. On a partial clone a missing object can therefore still be
+fetched.
 
 Every call also passes `-c core.fsmonitor=false`. Git runs the program named
 by `core.fsmonitor` when it reads the index (`ls-files --stage`), and with
@@ -68,7 +74,7 @@ _NEUTRAL_CONFIG = ["-c", "core.fsmonitor=false"]
 def _env() -> Dict[str, str]:
     env = dict(os.environ)
     env["GIT_OPTIONAL_LOCKS"] = "0"
-    env["GIT_NO_LAZY_FETCH"] = "1"
+    env["GIT_NO_LAZY_FETCH"] = "1"  # does not stop a promisor fetch; see the module docstring
     env["GIT_NO_REPLACE_OBJECTS"] = "1"  # judge the real object, never a refs/replace substitute
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["LC_ALL"] = "C"
