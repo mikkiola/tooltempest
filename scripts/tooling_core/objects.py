@@ -7,9 +7,11 @@ hash of "<type> <size>\\0<content>". A mutable checkout, a dirty cache, a
 moved HEAD or a tampered object stored under a wrong name therefore cannot
 change what is installed or reported.
 
-Reading never fetches: lazy fetch is disabled and no network protocol is
-allowed. The only network function is `fetch_commit`, which callers invoke
-only when the user explicitly permitted it.
+Reading never fetches: no network protocol is allowed (GIT_ALLOW_PROTOCOL=none).
+That variable is what stops a promisor clone from fetching a missing object.
+GIT_NO_LAZY_FETCH=1 is also set, but git 2.44.0 does not honour it for that
+purpose (observed: the object was fetched anyway). The only network function
+is `fetch_commit`, which callers invoke only when the user explicitly permitted it.
 """
 from __future__ import annotations
 
@@ -62,8 +64,10 @@ def is_oid(value: object) -> bool:
 
 def git_env(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     """Environment for every Git call: no inherited GIT_* (a hook's GIT_DIR or
-    GIT_INDEX_FILE must not redirect us), no prompts, no lazy fetch, no
-    replace refs, no optional index refresh."""
+    GIT_INDEX_FILE must not redirect us), no prompts, no replace refs, no
+    optional index refresh, and no network protocol. GIT_ALLOW_PROTOCOL=none is
+    the setting that stops a promisor lazy fetch; GIT_NO_LAZY_FETCH=1 does not
+    stop it in git 2.44.0 and is kept only as a harmless extra."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env.update({
         "GIT_OPTIONAL_LOCKS": "0",
