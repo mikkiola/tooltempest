@@ -2,7 +2,9 @@
 
 The script reads the process table and open files, so these tests run on macOS only (it is written for macOS bash
 3.2) and use throwaway repositories under /private/tmp. They check the contract: what a dry run changes, what
-`apply` removes, what it refuses, and that it never uses a force option.
+`apply` removes, what it refuses, and that it never uses a force option. Each gate has a test that makes only that
+gate fail, and a failure of the process table or of the open-file listing (`ps`, `lsof`: unavailable, exit non-zero,
+or no output) must skip the item with the reason, never let it through.
 """
 import os
 import shutil
@@ -47,6 +49,8 @@ class CleanupScriptTests(unittest.TestCase):
         git(self.t, "clone", "-q", origin, self.repo)
         with open(os.path.join(self.repo, "a.txt"), "w") as fh:
             fh.write("1\n")
+        with open(os.path.join(self.repo, ".gitignore"), "w") as fh:
+            fh.write("*.log\n__pycache__/\n")
         git(self.repo, "add", "-A")
         git(self.repo, "commit", "-q", "-m", "one")
         git(self.repo, "push", "-q", "origin", "HEAD:main")
@@ -69,6 +73,31 @@ class CleanupScriptTests(unittest.TestCase):
     def bundle(self):
         os.makedirs(os.path.join(self.bk, "r1"), exist_ok=True)
         git(self.repo, "bundle", "create", os.path.join(self.bk, "r1", "backup-branches.bundle"), "--all")
+
+    NEEDED = ("git", "grep", "cut", "awk", "sort", "date", "mktemp", "shasum", "wc", "tr", "head", "rm", "ps", "lsof")
+
+    def stub_bin(self, name, body=None):
+        """A bin directory that holds every tool the script needs; `name` is replaced by a stub that runs `body`
+        (a shell snippet), or left out entirely when `body` is None. Returns the PATH value."""
+        d = os.path.join(self.t, "bin-" + name + ("-gone" if body is None else "-stub"))
+        os.makedirs(d, exist_ok=True)
+        for tool in self.NEEDED:
+            real = shutil.which(tool) or shutil.which(tool, path="/usr/sbin:/usr/bin:/bin")
+            if tool == name:
+                if body is not None:
+                    with open(os.path.join(d, tool), "w") as fh:
+                        fh.write("#!/bin/bash\n%s\n" % body)
+                    os.chmod(os.path.join(d, tool), 0o755)
+            elif real and not os.path.exists(os.path.join(d, tool)):
+                os.symlink(real, os.path.join(d, tool))
+        return d
+
+    def assert_skipped_with_reason(self, out, tool):
+        self.assertTrue(os.path.isdir(self.wt), out)
+        self.assertEqual(git(self.repo, "branch", "--list", "feat/x").strip().lstrip("+ "), "feat/x")
+        self.assertNotIn("all gates pass", out)
+        self.assertIn("SKIP: [r1] %s" % self.wt, out)
+        self.assertIn("%s unusable" % tool, out)
 
     def run_script(self, mode, env_extra=None, worklist=None):
         env = clean_env({"TT_WORKSPACE": self.ws, "TT_BACKUP_DIR": self.bk, "TT_SCRATCH_PREFIX": self.scratch + "/",
@@ -147,10 +176,125 @@ class CleanupScriptTests(unittest.TestCase):
         self.assertIn("gate lsof:", out)
         self.assertNotIn("all gates pass", out)
 
-    def test_a_stale_backup_bundle_blocks(self):
+    def test_a_missing_backup_bundle_blocks(self):
         rc, out = self.run_script("apply")  # no bundle at all
         self.assertTrue(os.path.isdir(self.wt), out)
-        self.assertIn("DIFFERS", out)
+        self.assertIn("DIFFERS(none)", out)
+
+    def test_a_backup_bundle_that_is_older_than_the_branch_blocks(self):
+        self.bundle()
+        with open(os.path.join(self.wt, "b.txt"), "w") as fh:
+            fh.write("more\n")
+        git(self.wt, "add", "-A")
+        git(self.wt, "commit", "-q", "-m", "after the backup")
+        git(self.repo, "push", "-q", "origin", "feat/x:main")  # integrated, so only the bundle is stale
+        git(self.repo, "fetch", "-q", "origin")
+        self.write_worklist()
+        rc, out = self.run_script("apply")
+        self.assertTrue(os.path.isdir(self.wt), out)
+        self.assertIn("bundle=DIFFERS", out)
+        self.assertNotIn("all gates pass", out)
+
+    def test_a_worktree_named_in_the_vscode_storage_file_is_skipped(self):
+        self.bundle()
+        with open(self.storage, "w") as fh:
+            fh.write('{"windows": [{"folder": "file://%s"}]}\n' % self.wt)
+        rc, out = self.run_script("apply")
+        self.assertEqual(rc, 0, out)
+        self.assertTrue(os.path.isdir(self.wt), out)
+        self.assertIn("gate storage.json matches: 1", out)
+        self.assertNotIn("all gates pass", out)
+
+    def test_a_process_that_names_the_worktree_on_its_command_line_is_skipped(self):
+        self.bundle()
+        holder = subprocess.Popen(["/bin/sh", "-c", "sleep 60; :", "marker", self.wt],  # not its cwd, no open file: only `ps` sees it
+                                  start_new_session=True)
+        self.addCleanup(holder.wait)
+        self.addCleanup(os.killpg, holder.pid, 9)  # the shell and its `sleep` child
+        rc, out = self.run_script("apply")
+        self.assertTrue(os.path.isdir(self.wt), out)
+        self.assertRegex(out, r"gate lsof: none\s+ps: +\d+ +\d+ +/bin/sh -c sleep 60; : marker")
+        self.assertNotIn("all gates pass", out)
+
+    def test_a_process_with_the_worktree_as_its_working_directory_is_seen_by_lsof(self):
+        self.bundle()
+        holder = subprocess.Popen(["/bin/sleep", "60"], cwd=self.wt)
+        self.addCleanup(holder.wait)
+        self.addCleanup(holder.kill)
+        rc, out = self.run_script("apply")
+        self.assertTrue(os.path.isdir(self.wt), out)
+        self.assertNotIn("cannot tell", out)  # lsof worked: this is a detection, not the fail-closed path
+        self.assertRegex(out, r"gate lsof: \d+\t")  # a row of the open-file list: pid, command, fd, name
+        self.assertNotIn("all gates pass", out)
+
+    def test_an_ignored_entry_outside_the_allowlist_is_skipped_and_an_allowlisted_one_is_not(self):
+        self.bundle()
+        os.makedirs(os.path.join(self.wt, "__pycache__"))
+        with open(os.path.join(self.wt, "__pycache__", "x.pyc"), "w") as fh:
+            fh.write("x\n")
+        rc, out = self.run_script("dry")
+        self.assertIn("all gates pass", out)  # an allowlisted generated path alone does not block
+        with open(os.path.join(self.wt, "debug.log"), "w") as fh:  # ignored by .gitignore, not on the allowlist
+            fh.write("secret-ish\n")
+        rc, out = self.run_script("apply")
+        self.assertTrue(os.path.isdir(self.wt), out)
+        self.assertIn("not allowlisted: !! debug.log", out)
+        self.assertNotIn("all gates pass", out)
+
+    # --- a failing process table or open-file listing must never read as "no process uses the worktree" ---
+
+    def test_ps_that_exits_non_zero_skips_the_item_with_the_reason(self):
+        self.bundle()
+        bindir = self.stub_bin("ps", 'echo "ps: boom" >&2; exit 1')
+        rc, out = self.run_script("apply", {"PATH": bindir})
+        self.assertEqual(rc, 0, out)
+        self.assert_skipped_with_reason(out, "ps")
+
+    def test_ps_that_prints_nothing_skips_the_item_with_the_reason(self):
+        self.bundle()
+        bindir = self.stub_bin("ps", "exit 0")
+        rc, out = self.run_script("apply", {"PATH": bindir})
+        self.assert_skipped_with_reason(out, "ps")
+
+    def test_ps_that_cannot_be_run_skips_the_item_with_the_reason(self):
+        self.bundle()
+        bindir = self.stub_bin("ps", None)
+        rc, out = self.run_script("apply", {"PATH": bindir})
+        self.assert_skipped_with_reason(out, "ps")
+
+    def test_lsof_that_exits_non_zero_skips_the_item_with_the_reason(self):
+        self.bundle()
+        bindir = self.stub_bin("lsof", 'echo "lsof: boom" >&2; exit 1')
+        rc, out = self.run_script("apply", {"PATH": bindir})
+        self.assertEqual(rc, 0, out)
+        self.assert_skipped_with_reason(out, "lsof")
+
+    def test_lsof_that_prints_nothing_skips_the_item_with_the_reason(self):
+        self.bundle()
+        bindir = self.stub_bin("lsof", "exit 0")
+        rc, out = self.run_script("apply", {"PATH": bindir})
+        self.assert_skipped_with_reason(out, "lsof")
+
+    def test_lsof_that_cannot_be_run_skips_the_item_with_the_reason(self):
+        self.bundle()
+        bindir = self.stub_bin("lsof", None)
+        rc, out = self.run_script("apply", {"PATH": bindir})
+        self.assert_skipped_with_reason(out, "lsof")
+
+    def test_a_dry_run_with_a_failing_ps_lists_no_planned_command_for_the_item(self):
+        self.bundle()
+        bindir = self.stub_bin("ps", "exit 1")
+        rc, out = self.run_script("dry", {"PATH": bindir})
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("worktree remove %s" % self.wt, out)
+        self.assertIn("ps unusable", out)
+
+    def test_a_ps_stub_that_wraps_the_real_ps_does_not_change_the_result(self):
+        # a stub that only wraps the real `ps`: the same item passes, so the skips above are due to the failure
+        self.bundle()
+        bindir = self.stub_bin("ps", 'exec %s "$@"' % shutil.which("ps"))
+        rc, out = self.run_script("dry", {"PATH": bindir})
+        self.assertIn("all gates pass", out)
 
     def test_a_path_outside_the_scratch_prefix_stops_the_run(self):
         self.bundle()

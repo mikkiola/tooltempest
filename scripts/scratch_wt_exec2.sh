@@ -16,6 +16,9 @@
 # tip is contained in origin/main, the branch tip equals the one in the backup bundle, and `git status --ignored`
 # shows nothing but allowlisted generated paths. It uses `git worktree remove` and `git branch -d`, never a
 # force option. An item that fails a gate is skipped and reported; nothing is guessed.
+# The process gate fails closed: if `ps` or `lsof` cannot run, exits non-zero or prints nothing, no item can be shown
+# to be unused, so every item is skipped with that reason. The process table and the open-file list are read once, at
+# the start of the run, and the apply-time gate re-reads that snapshot.
 # bash 3.2 safe; stops at the first non-zero exit of a state-changing command.
 export GIT_OPTIONAL_LOCKS=0
 MODE=${1:-dry}; [ "$MODE" = dry ] || [ "$MODE" = apply ] || { echo "usage: $0 dry|apply WORKLIST"; exit 2; }
@@ -65,8 +68,21 @@ echo "claude-like processes:"; ps -axo pid,command | grep -i -E '(^| )[^ ]*/clau
 
 for r in $REPOS; do echo; echo "### git worktree list ($r), full paths:"; git -C "$M/$r" worktree list; done
 
-PSF=$(mktemp); ps -axo pid,ppid,command > "$PSF"
-LSF=$(mktemp); lsof -Fpcfn 2>/dev/null | awk '/^p/{p=substr($0,2)} /^c/{c=substr($0,2)} /^f/{f=substr($0,2)} /^n/{print p"\t"c"\t"f"\t"substr($0,2)}' > "$LSF"
+# A tool that cannot run, exits non-zero or prints nothing (a machine always has processes and open files) leaves a
+# reason in PS_ERR / LS_ERR; the gate then fails closed instead of reading an empty snapshot as "nothing uses it".
+PS_ERR=""; LS_ERR=""
+PSF=$(mktemp); LSR=$(mktemp); LSF=$(mktemp)
+PS_MSG=$(ps -axo pid,ppid,command 2>&1 >"$PSF"); rc=$?
+if [ $rc -ne 0 ]; then PS_ERR="ps unusable: exit $rc ${PS_MSG:0:120}"
+elif [ ! -s "$PSF" ]; then PS_ERR="ps unusable: no output"; fi
+LS_MSG=$(lsof -Fpcfn 2>&1 >"$LSR"); rc=$?
+if [ $rc -ne 0 ]; then LS_ERR="lsof unusable: exit $rc ${LS_MSG:0:120}"
+elif [ ! -s "$LSR" ]; then LS_ERR="lsof unusable: no output"
+else
+  awk '/^p/{p=substr($0,2)} /^c/{c=substr($0,2)} /^f/{f=substr($0,2)} /^n/{print p"\t"c"\t"f"\t"substr($0,2)}' < "$LSR" > "$LSF" || LS_ERR="lsof unusable: its output could not be parsed"
+fi
+[ -z "$PS_ERR" ] || echo "WARNING: $PS_ERR; every item will be skipped"
+[ -z "$LS_ERR" ] || echo "WARNING: $LS_ERR; every item will be skipped"
 
 # ---- resolve every path from the repository's own worktree list; stop if anything differs from the scope
 echo; echo "### scope resolution (path from git worktree list, expected HEAD, expected branch)"
@@ -89,9 +105,10 @@ $ITEMS
 ITEMS_EOF
 
 gate() {  # $1 repo $2 path $3 tip $4 branch ; prints details; returns 0 if all gates pass
-  R=$1; P=$2; TIP=$3; BR=$4; REPO="$M/$R"; G="git -C $REPO"; SID=$(echo "$P" | awk -F/ '{print $6}')
+  R=$1; P=$2; TIP=$3; BR=$4; REPO="$M/$R"; G="git -C $REPO"; SID=$(echo "$P" | awk -F/ '{print $6}'); GATE_WHY=""
   [ -d "$P" ] || { echo "   gate: directory missing"; return 1; }
   n=$(grep -c -F -- "$P" "$ST"); echo "   gate storage.json matches: $n"; [ "$n" = 0 ] || return 1
+  if [ -n "$PS_ERR$LS_ERR" ]; then GATE_WHY="${PS_ERR:+$PS_ERR }${LS_ERR}"; echo "   gate lsof/ps: cannot tell whether a process uses the worktree: $GATE_WHY"; return 1; fi
   LSM=$(grep -F -- "$P" "$LSF" | head -2); PSM=$(grep -F -e "$P" -e "$SID" "$PSF" | grep -v -F "$PSF" | head -2)
   echo "   gate lsof: ${LSM:-none}   ps: ${PSM:-none}"; [ -z "$LSM$PSM" ] || return 1
   H=$(git -C "$P" rev-parse HEAD); case "$H" in "$TIP"*) echo "   gate HEAD == $TIP: yes";; *) echo "   gate HEAD $H != $TIP"; return 1;; esac
@@ -117,7 +134,7 @@ while IFS='|' read -r R P TIP BR; do
   [ -z "$R" ] && continue
   echo; echo "=== [$R] $P"
   if gate "$R" "$P" "$TIP" "$BR"; then echo "   RESULT: all gates pass"; PASSED="$PASSED
-$R|$P|$TIP|$BR"; else skip "[$R] $P: gate failed"; fi
+$R|$P|$TIP|$BR"; else skip "[$R] $P: gate failed${GATE_WHY:+ ($GATE_WHY)}"; fi
 done <<EOF
 $RESOLVED
 EOF
@@ -129,13 +146,13 @@ done <<EOF
 $PASSED
 EOF
 
-if [ "$MODE" = dry ]; then printf "=== skipped (dry run):%s\n" "${SKIPPED:- none}"; echo "DRY RUN: nothing changed."; rm -f "$PSF" "$LSF"; exit 0; fi
+if [ "$MODE" = dry ]; then printf "=== skipped (dry run):%s\n" "${SKIPPED:- none}"; echo "DRY RUN: nothing changed."; rm -f "$PSF" "$LSF" "$LSR"; exit 0; fi
 
 echo; echo "### APPLY"
 while IFS='|' read -r R P TIP BR; do
   [ -z "$R" ] && continue
   echo; echo "=== [$R] $P"
-  gate "$R" "$P" "$TIP" "$BR" >/dev/null 2>&1 || { skip "[$R] $P: gate failed at apply time"; continue; }
+  gate "$R" "$P" "$TIP" "$BR" >/dev/null 2>&1 || { skip "[$R] $P: gate failed at apply time${GATE_WHY:+ ($GATE_WHY)}"; continue; }
   REPO="$M/$R"; G="git -C $REPO"
   cur=$($G rev-parse "refs/heads/$BR")
   echo "\$ git -C $REPO worktree remove $P"
@@ -161,4 +178,4 @@ done
 echo; for r in $REPOS; do echo "AFTER  $(dig $r)"; done
 echo "BEFORE (for comparison):$BEFORE_ALL"
 printf "=== skipped:%s\n" "${SKIPPED:- none}"
-rm -f "$PSF" "$LSF"
+rm -f "$PSF" "$LSF" "$LSR"
