@@ -2,6 +2,7 @@
 pointed at, and no failure of the checker or the input reads as PASS/N/A."""
 import json
 import os
+import shlex
 import shutil
 import stat
 import tempfile
@@ -788,8 +789,14 @@ class CheckerFailureTests(DocopsTestCase):
 
 class PromisorCloneTests(DocopsTestCase):
     """In a partial (promisor) clone, a missing object makes git fetch from the remote. The checker runs
-    every git call with all network protocols denied, so the object stays missing and the result is a
-    tool error, never a PASS. The remote is a local `file://` repository."""
+    every git call with lazy fetch off and all network protocols denied, so the object stays missing and the
+    result is a tool error, never a PASS. The remote is a local `file://` repository. Three properties are
+    asserted, none of them by Git's error wording (it differs between Git versions): the result is the tool
+    error for an unreadable blob, the object is still missing afterwards, and no `git upload-pack` was started
+    for the remote. A start is observed by a wrapper that the clone's own `remote.origin.uploadpack` setting runs
+    before `git upload-pack`; the control at the end shows that the wrapper sees a fetch when the checker's
+    denials are absent. Which of the two denials is enough depends on the Git version, and the test does not
+    isolate one."""
 
     def test_a_missing_object_stays_missing_and_the_result_is_a_tool_error(self):
         with GitFixture() as seed:
@@ -802,20 +809,29 @@ class PromisorCloneTests(DocopsTestCase):
             seed.git("clone", "-q", "--no-checkout", "--filter=blob:none", "file://" + origin, partial)
             blob = seed.git("rev-parse", "HEAD:SPEC.md")
 
+            started = os.path.join(os.path.dirname(seed.root), "upload-pack-started.log")
+            wrapper = os.path.join(os.path.dirname(seed.root), "upload-pack.sh")
+            with open(wrapper, "w") as handle:
+                handle.write("#!/bin/sh\necho started >> %s\nexec git upload-pack \"$@\"\n" % shlex.quote(started))
+            os.chmod(wrapper, 0o755)
+            seed.git("-C", partial, "config", "remote.origin.uploadpack", shlex.quote(wrapper))
+
             def missing():
                 return seed.git("-C", partial, "rev-list", "--objects", "--missing=print", "HEAD").split()
 
             self.assertIn("?" + blob, missing())  # before: the SPEC blob is not in the clone
+            self.assertFalse(os.path.exists(started))  # and no upload-pack has been started so far
             code, result, _ = run_check_json(["--repo", partial, "--tree", "HEAD"])
             self.assertEqual(code, 2, result)
             self.assertIsNone(result["summary"]["status"])
-            self.assertIsNotNone(result["snapshots"][0]["error"])
-            self.assertIn("?" + blob, missing())  # after: still missing, nothing was fetched
-            self.assertIn("not allowed", result["snapshots"][0]["error"]["message"])  # the protocol was refused
+            self.assertEqual(result["snapshots"][0]["error"]["code"], "BLOB_UNREADABLE")  # 1: fail closed, a tool error
+            self.assertIn("?" + blob, missing())  # 2: still missing afterwards
+            self.assertFalse(os.path.exists(started))  # 3: no upload-pack was started for the remote
             self.assertValidResult(result)
-            # control: without the denial the same clone does fetch the blob, so the refusal above is the cause
+            # control: without the checker's denials the same clone does fetch the blob, and the wrapper sees it
             seed.git("-C", partial, "cat-file", "blob", blob)
             self.assertNotIn("?" + blob, missing())
+            self.assertTrue(os.path.exists(started))
 
 
 class AggregationTests(DocopsTestCase):
