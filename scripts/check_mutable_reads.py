@@ -37,8 +37,10 @@ the exit code. A blank reason, an unknown pattern, an empty path suffix or a rep
 error (exit 2); an entry that matches no finding is reported. Nothing is excluded unless the caller names it.
 
 `--clone DIR` adds hygiene lines: a clone that is dirty, detached, or behind its cached upstream ref.
-A hygiene warning never changes the exit code. The check runs only local Git reads, with the
-`core.fsmonitor` program disabled, and never contacts a remote (nothing is fetched). A `--clone` that is not
+A hygiene warning never changes the exit code. The check runs local Git commands (`status`, `rev-list`, ...)
+that take no optional locks, with the `core.fsmonitor` program, the system configuration, the inherited GIT_*
+environment and network protocols disabled, and never contacts a remote (nothing is fetched). The clone's own and
+the user's default Git configuration stay in effect; an environment-selected one is not (see `--limits`). A `--clone` that is not
 the root of a work tree is a tool error (exit 2), not a warning.
 
 Exit code: 0 nothing found, 1 at least one finding, 2 the scan could not give a verdict (usage error,
