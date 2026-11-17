@@ -62,7 +62,8 @@ the test file). It does not verify that any document is correct. Run it
 after changes to those paths.
 
 The tooling bootstrap (`scripts/tooling.py`, `scripts/tooling_core/`,
-`schemas/tooling-*.schema.json`) has its own suite:
+`schemas/tooling-*.schema.json`) and the pinned-checker launch check
+(`scripts/tt_pin_check.py`, ADR-0022) have their own suite:
 
 ```bash
 python3 -B -m unittest discover -s tests/tooling -t tests/tooling
@@ -76,7 +77,10 @@ the tool's behaviour (verified
 Git-object reads, the three reported properties, dry-run-first materialize,
 refusal to overwrite, journal recovery, serialisation, the documented
 command-line contract in both output formats), not that any consumer is
-installed correctly. Run it after changes to those paths.
+installed correctly. The launch check is tested by its complete decision table
+and against a real consumer that holds a real install of this checkout's
+payload (linked worktrees, a main checkout that is behind, the effective index,
+a source without the pin). Run it after changes to those paths.
 
 The mutable-read scan (`scripts/check_mutable_reads.py`, ADR-0022) has its own suite:
 

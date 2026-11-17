@@ -25,6 +25,7 @@ scripts/tooling_core/declarations.py
 scripts/tooling_core/engine.py
 scripts/tooling_core/fsops.py
 scripts/tooling_core/objects.py
+scripts/tt_pin_check.py
 skills/doc-sync/SKILL.md
 skills/spec/SKILL.md
 skills/verify/SKILL.md

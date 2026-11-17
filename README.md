@@ -102,6 +102,12 @@ command surface from the checker above.
   `--target client --root DIR`, into a root the operator names; there is no
   default client directory and no consumer run selects it
 - `scripts/tooling_core/` — the standard-library package behind it
+- `scripts/tt_pin_check.py` — the launch check that a consumer hook calls before it runs the pinned checker
+  (ADR-0022, Decision 5): it reads the lock from the effective index of the commit in progress (or of each pushed
+  tip), proves the installed `scripts/tooling.py` by hash against the pinned commit, then the lock's declared files and
+  the install receipt, prints the path and hashes it used, and stops on a mismatch or a missing file, with no
+  fallback to another worktree or clone. A tip without a lock is skipped with a message. It fetches nothing
+  and writes nothing in the repository
 - `schemas/tooling-result.schema.json`, `schemas/tooling-receipt.schema.json`
 
 `verify` and `status` are read-only, never touch the network, and report three
