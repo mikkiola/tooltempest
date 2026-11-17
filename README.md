@@ -153,7 +153,7 @@ four it also holds the reference document below, the consumer contract
 its single source), the universal rules `docs/tooltempest/universal-rules.md`
 (the second file of the contract root), the manifest validator
 `scripts/check_manifest.py` (a maintainer tool), `scripts/check_mutable_reads.py` (a maintainer tool: the
-static scan of ADR-0022; fixtures in `tests/mutable_reads`), `scripts/scratch_wt_exec2.sh` (the gated worktree
+static scan of ADR-0022; fixtures in `tests/mutable_reads`), `scripts/worktree_cleanup.sh` (the gated worktree
 cleanup of the universal rules; a maintainer tool, tested in `tests/distribution`), the DocOps checker files and
 the tooling bootstrap files above.
 

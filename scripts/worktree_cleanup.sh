@@ -1,7 +1,7 @@
 #!/bin/bash
 # Worktree cleanup executor (universal rules, "Worktree lifecycle", stage "Clean up").
 #
-# usage: scratch_wt_exec2.sh dry|apply WORKLIST
+# usage: worktree_cleanup.sh dry|apply WORKLIST
 #
 # WORKLIST: one item per line, `repo|path suffix as found in git worktree list|expected short HEAD|expected branch`.
 # Blank lines and lines starting with # are ignored. Environment (all required except TT_VSCODE_STORAGE):

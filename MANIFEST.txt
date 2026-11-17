@@ -17,7 +17,6 @@ scripts/docops_core/gitstate.py
 scripts/docops_core/impact.py
 scripts/docops_core/policy.py
 scripts/docops_core/specparse.py
-scripts/scratch_wt_exec2.sh
 scripts/tooling.py
 scripts/tooling_core/__init__.py
 scripts/tooling_core/cli.py
@@ -26,6 +25,7 @@ scripts/tooling_core/engine.py
 scripts/tooling_core/fsops.py
 scripts/tooling_core/objects.py
 scripts/tt_pin_check.py
+scripts/worktree_cleanup.sh
 skills/doc-sync/SKILL.md
 skills/spec/SKILL.md
 skills/verify/SKILL.md

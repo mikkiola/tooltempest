@@ -1,4 +1,4 @@
-"""`scripts/scratch_wt_exec2.sh`, the gated worktree cleanup (universal rules, "Worktree lifecycle").
+"""`scripts/worktree_cleanup.sh`, the gated worktree cleanup (universal rules, "Worktree lifecycle").
 
 The script reads the process table and open files, so these tests run on macOS only (it is written for macOS bash
 3.2) and use throwaway repositories under /private/tmp. They check the contract: what a dry run changes, what
@@ -16,7 +16,7 @@ import uuid
 
 from dist_helpers import REPO_ROOT
 
-SCRIPT = REPO_ROOT / "scripts" / "scratch_wt_exec2.sh"
+SCRIPT = REPO_ROOT / "scripts" / "worktree_cleanup.sh"
 
 
 def clean_env(extra=None):
