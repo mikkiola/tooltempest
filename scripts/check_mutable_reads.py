@@ -13,7 +13,8 @@ and nothing else. A clean result means "none of these seven shapes was found", n
 `--limits` prints the forms it does not cover.
 
     P1  A path inside a local clone of the source repository, written as a literal or reached through a
-        variable that holds the clone root, outside a Git object read.
+        variable that holds the clone root, outside a Git object read. The clone is recognized by a directory
+        named exactly `tooltempest`.
     P2  `cd <clone>` followed by a relative `docs/`, `scripts/`, ... path.
     P3  A path returned by a `resolve_*` / `find_*` style function and then executed, with no line
         between the resolver and the execution that mentions both the variable and a hash word.
@@ -136,11 +137,16 @@ LIMITS = """Forms the scan does not cover (not covered; a clean result says noth
 - a clone path whose home, workspace or cache part is not one of `Path.home()`, `$HOME`, `${HOME}`, `~`, `WORKSPACE`,
   `/Users/<name>` or `.cache/tooltempest/repo` on the same line (a literal join such as
   `os.path.join(Path.home(), "Dev", "tooltempest", "docs")` is seen; a base held in a variable is not)
-- a resolver whose name is not resolve_/find_/locate_/discover_/lookup_
+- a resolver whose name is not resolve_/find_/locate_/discover_/lookup_, and a resolver called as an attribute or
+  method (`helpers.resolve_x()`): P3 sees only a bare name directly after `=` or `$(`
+- P2 does not see a relative path in quotes after the `cd` (`cd "$CLONE" && python3 "scripts/x.py"`)
+- a clone is recognized by a directory named exactly `tooltempest` (P1): a clone or a worktree under another name, such
+  as `tooltempest-fix`, is not seen
 - docstrings and string literals are scanned as code, so prose that quotes a pattern is reported
 - any language other than shell and Python. A directory walk reads only .py/.sh/.bash/.zsh files and extensionless
-  files with a shebang, and skips .git, node_modules, __pycache__, .venv and venv; a file named on the command line is
-  always read
+  files with a shebang, and skips .git, node_modules, __pycache__, .venv and venv; it does not enter a symlinked
+  directory; a file named on the command line is always read; a directory it cannot list is an error (exit 2), not a
+  clean result
 - the hygiene check disables only the `core.fsmonitor` program, the system configuration, the inherited GIT_*
   environment and network protocols; a clean filter or another program that the clone's own or the user's Git
   configuration names can still start
@@ -325,7 +331,7 @@ def scan_text(path: str, text: str) -> List[Finding]:
     return sorted(found.values(), key=lambda f: (f.line, f.pattern))
 
 
-def _wants(path: Path) -> bool:
+def _wants(path: Path, errors: List[str]) -> bool:
     if path.suffix in SCRIPT_SUFFIXES:
         return True
     if path.suffix:
@@ -333,7 +339,8 @@ def _wants(path: Path) -> bool:
     try:
         with open(path, "rb") as fh:
             return fh.read(2) == b"#!"
-    except OSError:
+    except OSError as exc:  # a file that cannot be opened is not "no script": no verdict
+        errors.append("%s: cannot be read (%s)" % (path, exc.strerror))
         return False
 
 
@@ -344,11 +351,12 @@ def collect(paths: List[str], errors: List[str]) -> List[Path]:
         if p.is_file():
             files.append(p)
         elif p.is_dir():
-            for root, dirs, names in os.walk(p):
+            for root, dirs, names in os.walk(p, onerror=lambda exc: errors.append(
+                    "%s: cannot be listed (%s)" % (exc.filename, exc.strerror))):
                 dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS)
                 for name in sorted(names):
                     q = Path(root) / name
-                    if q.is_file() and _wants(q):
+                    if q.is_file() and _wants(q, errors):
                         files.append(q)
         else:
             errors.append("%s: no such file or directory" % raw)

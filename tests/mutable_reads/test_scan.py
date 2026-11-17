@@ -167,8 +167,52 @@ class ContractTests(unittest.TestCase):
                        "in no order", "UPPER_CASE token", "also inside a longer word",
                        "`python` followed only by digits and dots", "a variable after a flag is taken",
                        "Shell-shaped command text on any line", "a base held in a variable is not",
-                       "or the user's Git configuration", "system configuration", "the inherited GIT_* environment"):
+                       "or the user's Git configuration", "system configuration", "the inherited GIT_* environment",
+                       "P2 does not see a relative path in quotes", "a resolver called as an attribute",
+                       "a directory named exactly `tooltempest`", "does not enter a symlinked directory",
+                       "a directory it cannot list is an error"):
             self.assertIn(needle, " ".join(out.split()))  # the wrapping of the text does not matter
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root can read any directory")
+    def test_a_directory_that_cannot_be_listed_is_an_error_not_a_clean_result(self):
+        tmp = Path(tempfile.mkdtemp(prefix="scan-unreadable-"))
+        locked = tmp / "locked"
+        locked.mkdir()
+        (tmp / "ok.sh").write_text("echo hello\n")
+        os.chmod(locked, 0)
+        self.addCleanup(shutil.rmtree, tmp, True)
+        self.addCleanup(os.chmod, locked, 0o700)
+        code, out, err = scan(tmp)
+        self.assertEqual(code, 2, out + err)
+        self.assertIn("locked", err)
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root can read any file")
+    def test_an_extensionless_file_that_cannot_be_opened_is_an_error_not_a_clean_result(self):
+        tmp = Path(tempfile.mkdtemp(prefix="scan-unreadable-file-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        script = tmp / "tool"
+        script.write_text("#!/bin/sh\necho hello\n")
+        os.chmod(script, 0)
+        code, out, err = scan(tmp)
+        self.assertEqual(code, 2, out + err)
+        self.assertIn("cannot be read", err)
+
+    def test_the_forms_that_limits_names_are_clean_and_their_controls_are_not(self):
+        shapes = {  # name: (text, patterns expected). Each unseen form has a control that differs only in that form
+            "quoted.sh": ('cd "$HOME/Dev/tooltempest" && python3 "scripts/docops.py" check\n', set()),
+            "unquoted.sh": ('cd "$HOME/Dev/tooltempest" && python3 scripts/docops.py check\n', {"P2"}),
+            "method.py": ("import subprocess, sys\nchecker = helpers.resolve_checker()\nsubprocess.run([sys.executable, checker])\n", set()),
+            "bare.py": ("import subprocess, sys\nchecker = resolve_checker()\nsubprocess.run([sys.executable, checker])\n", {"P3"}),
+            "other_name.py": ('path = "/Users/someone/Dev/_wt/tooltempest-fix/docs/x.md"\n', set()),
+            "plain_name.py": ('path = "/Users/someone/Dev/_wt/tooltempest/docs/x.md"\n', {"P1"}),
+        }
+        tmp = Path(tempfile.mkdtemp(prefix="scan-limits-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        for name, (text, wanted) in shapes.items():
+            (tmp / name).write_text(text)
+            with self.subTest(name):
+                code, out, err = scan(tmp / name)
+                self.assertEqual((ids_of(out), code), (wanted, 1 if wanted else 0), out + err)
 
     def test_the_scan_changes_nothing_it_inspects(self):
         def digest():
