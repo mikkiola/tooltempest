@@ -10,10 +10,10 @@ or modify any earlier ADR; `scripts/doc_sync.py`, `scripts/doc_sync_tier2.py`
 and the consumers' copies of `verify.py` are untouched and keep working
 until a later stage retires them.
 
-Amended in place on 2026-11-03, still Proposed. The ADR rules in
+Amended in place on 2026-11-03, when the ADR was Proposed. The ADR rules in
 `docs/reference/documentation-rules.md` forbid editing an ADR only after
-acceptance ("an ADR is never edited after acceptance"); this record has not
-been accepted. The amendment replaces Decision 7 and the "Default scope"
+acceptance ("an ADR is never edited after acceptance"); this record had not
+been accepted at the time. The amendment replaces Decision 7 and the "Default scope"
 alternatives row, adds three alternatives rows and a Consequences bullet,
 rewrites one Consequences bullet and one sentence of Decision 9, and adds a
 Confirmation note and a closing Source paragraph. A later clarification of the
