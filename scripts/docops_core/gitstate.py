@@ -7,9 +7,13 @@ does not opportunistically refresh the index. A Git failure raises GitError;
 it is never turned into an empty snapshot.
 
 No Git call can use the network: the environment sets `GIT_ALLOW_PROTOCOL=none`,
-which makes Git refuse every transport, so in a promisor (partial) clone a missing
-object is a Git failure and is never fetched (git 2.44.0; the tests build such a
-clone). `GIT_NO_LAZY_FETCH=1` is set as well but does not stop that fetch.
+which makes Git refuse every transport, and also sets `GIT_NO_LAZY_FETCH=1`; so in a
+promisor (partial) clone a missing object is a Git failure and is never fetched (the
+tests build such a clone). Both are kept on purpose, because which one is enough depends
+on the Git version. Observed over `file://`, by whether `git upload-pack` was
+started: on git 2.44.0 `GIT_NO_LAZY_FETCH=1` alone does not prevent the fetch and
+`GIT_ALLOW_PROTOCOL=none` alone does; on git 2.54.0 each of the two alone
+prevents it. No other version was observed.
 
 Every call also passes `-c core.fsmonitor=false`. Git runs the program named
 by `core.fsmonitor` when it reads the index (`ls-files --stage`), and with
@@ -72,7 +76,7 @@ _NEUTRAL_CONFIG = ["-c", "core.fsmonitor=false"]
 def _env() -> Dict[str, str]:
     env = dict(os.environ)
     env["GIT_OPTIONAL_LOCKS"] = "0"
-    env["GIT_NO_LAZY_FETCH"] = "1"  # does not stop a promisor fetch; GIT_ALLOW_PROTOCOL below does
+    env["GIT_NO_LAZY_FETCH"] = "1"  # no promisor fetch; alone enough on git 2.54.0, not alone on 2.44.0 (module docstring)
     env["GIT_ALLOW_PROTOCOL"] = "none"  # no transport: a missing object is an error, never a fetch
     env["GIT_NO_REPLACE_OBJECTS"] = "1"  # judge the real object, never a refs/replace substitute
     env["GIT_TERMINAL_PROMPT"] = "0"

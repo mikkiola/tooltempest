@@ -747,8 +747,8 @@ class CheckerFailureTests(DocopsTestCase):
             self.assertError(check(self.fx, "HEAD"))
 
     def test_git_environment_disables_locks_and_every_network_protocol(self):
-        # GIT_ALLOW_PROTOCOL=none is what stops a promisor fetch (git 2.44.0, see
-        # PromisorCloneTests); GIT_NO_LAZY_FETCH=1 is set as well but does not stop it.
+        # Both GIT_ALLOW_PROTOCOL=none and GIT_NO_LAZY_FETCH=1 are both set on purpose: which
+        # one stops a promisor fetch depends on the Git version (gitstate module docstring).
         seen = []
         real = gitstate.subprocess.run
 
