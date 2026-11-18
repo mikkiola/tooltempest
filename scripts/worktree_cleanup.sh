@@ -6,16 +6,30 @@
 # WORKLIST: one item per line, `repo|path suffix as found in git worktree list|expected short HEAD|expected branch`.
 # Blank lines and lines starting with # are ignored. Environment (all required except TT_VSCODE_STORAGE):
 #   TT_WORKSPACE        directory that holds the repositories named in the worklist
-#   TT_BACKUP_DIR       directory with <repo>/backup-branches.bundle for each repository (a gate compares branch tips)
+#   TT_BACKUP_DIR       (required, but not a gate) directory with <repo>/backup-branches.bundle for each
+#                       repository; read only to report whether a bundle holds the tip of a branch that has
+#                       commits outside origin/main (such a branch is refused whatever the bundle holds)
 #   TT_SCRATCH_PREFIX   a worktree path must start with this prefix, otherwise the item stops the run
 #   TT_VSCODE_STORAGE   VS Code globalStorage/storage.json (default below; an override is meant for tests only);
 #                       a worktree named there is in use. The file must exist.
 #
 # It removes a worktree and its branch only when every gate passes: the path comes from `git worktree list`
-# (never built from a prefix), HEAD and branch are the expected ones, no process or open file uses the path, the
-# tip is contained in origin/main, the branch tip equals the one in the backup bundle, and `git status --ignored`
-# shows nothing but allowlisted generated paths. It uses `git worktree remove` and `git branch -d`, never a
-# force option. An item that fails a gate is skipped and reported; nothing is guessed.
+# (never built from a prefix), the directory holds a checkout, HEAD and branch are the expected ones, no process or
+# open file uses the path, the tip is contained in origin/main (so the branch holds no commit that is not integrated,
+# and no backup bundle entry is needed: a branch with commits outside origin/main is refused), and
+# `git status --ignored` shows nothing but allowlisted generated paths: caches, and the installed payload of a
+# ToolTempest pin (scripts/, schemas/, docs/tooltempest/ and the receipt; each file is named in the allowlist below,
+# and the distribution tests fail when MANIFEST.txt lists an installed file that the allowlist lacks).
+# The script's own process and the processes it starts (`ps`, `lsof`, subshells) are not counted as a user of the
+# worktree, and neither are the files that its own process holds open (bash holds the script file open, which matters
+# when the script is an installed copy inside the worktree); the working directory of any process, its parent, and
+# every other process are counted. A parent shell whose command line names the worktree or its session directory
+# (for example through the worklist path) therefore blocks the item: start the script so that its parent does not.
+# The script implements the ancestor path only: a branch whose tip is saved only in a bundle is refused, because the
+# rule (universal rules, "Worktree lifecycle") also needs the branch to hold no work that is not integrated.
+# A registered worktree whose directory is empty is reported with the command that prunes it; the script never prunes.
+# It uses `git worktree remove` and `git branch -d`, never a force option. An item that fails a gate is skipped and
+# reported; nothing is guessed.
 # The process gate fails closed: if `ps` or `lsof` cannot run, exits non-zero or prints nothing, no item can be shown
 # to be unused, so every item is skipped with that reason. The process table and the open-file list are read once, at
 # the start of the run, and the apply-time gate re-reads that snapshot.
@@ -42,9 +56,11 @@ allow() {
     docs/tooltempest/|docs/tooltempest/*|scripts/docops.py|scripts/docops_core/|scripts/docops_core/*|scripts/tooling.py|scripts/tooling_core/|scripts/tooling_core/*) return 0;;
     schemas/docops-*.schema.json|schemas/tooling-*.schema.json) return 0;;
     schemas/|scripts/check_manifest.py) return 0;;   # the two entries added by the Owner
+    scripts/tt_pin_check.py|scripts/check_mutable_reads.py|scripts/worktree_cleanup.sh) return 0;;   # installed payload files added since
   esac
   return 1
 }
+empty_dir(){ local f; for f in "$1"/* "$1"/.[!.]* "$1"/..?*; do { [ -e "$f" ] || [ -L "$f" ]; } && return 1; done; return 0; }   # unmatched globs stay literal and do not exist
 dig(){ printf '%s HEAD=%s status=%s lines=%s\n' "$1" "$(git -C "$M/$1" rev-parse HEAD)" "$(git -C "$M/$1" status --porcelain=v1 -z | shasum -a 256 | cut -c1-16)" "$(git -C "$M/$1" status --porcelain=v1 | wc -l | tr -d ' ')"; }
 
 # repo|path suffix as found in `git worktree list`|expected short HEAD|expected branch
@@ -71,11 +87,13 @@ for r in $REPOS; do echo; echo "### git worktree list ($r), full paths:"; git -C
 # A tool that cannot run, exits non-zero or prints nothing (a machine always has processes and open files) leaves a
 # reason in PS_ERR / LS_ERR; the gate then fails closed instead of reading an empty snapshot as "nothing uses it".
 PS_ERR=""; LS_ERR=""
-PSF=$(mktemp); LSR=$(mktemp); LSF=$(mktemp)
+PSF=$(mktemp); LSR=$(mktemp); LSF=$(mktemp); LSE=$(mktemp)
 PS_MSG=$(ps -axo pid,ppid,command 2>&1 >"$PSF"); rc=$?
 if [ $rc -ne 0 ]; then PS_ERR="ps unusable: exit $rc ${PS_MSG:0:120}"
 elif [ ! -s "$PSF" ]; then PS_ERR="ps unusable: no output"; fi
-LS_MSG=$(lsof -Fpcfn 2>&1 >"$LSR"); rc=$?
+# lsof runs as a direct child, not inside $(...): a subshell would inherit the descriptor that holds this script file,
+# and the open-file rows of this script's own pid are dropped below ($$ is the script, not a subshell)
+lsof -Fpcfn 2>"$LSE" >"$LSR"; rc=$?; LS_MSG=$(head -c 120 "$LSE" | tr '\n' ' ')
 if [ $rc -ne 0 ]; then LS_ERR="lsof unusable: exit $rc ${LS_MSG:0:120}"
 elif [ ! -s "$LSR" ]; then LS_ERR="lsof unusable: no output"
 else
@@ -107,9 +125,16 @@ ITEMS_EOF
 gate() {  # $1 repo $2 path $3 tip $4 branch ; prints details; returns 0 if all gates pass
   R=$1; P=$2; TIP=$3; BR=$4; REPO="$M/$R"; G="git -C $REPO"; SID=$(echo "$P" | awk -F/ '{print $6}'); GATE_WHY=""
   [ -d "$P" ] || { echo "   gate: directory missing"; return 1; }
+  if empty_dir "$P"; then
+    GATE_WHY="the directory is empty, so there is no checkout to inspect (processes were not checked); Git still lists the worktree: run 'git -C $REPO worktree prune' (add -n to preview), this script does not prune"
+    echo "   gate: $GATE_WHY"; return 1
+  fi
   n=$(grep -c -F -- "$P" "$ST"); echo "   gate storage.json matches: $n"; [ "$n" = 0 ] || return 1
   if [ -n "$PS_ERR$LS_ERR" ]; then GATE_WHY="${PS_ERR:+$PS_ERR }${LS_ERR}"; echo "   gate lsof/ps: cannot tell whether a process uses the worktree: $GATE_WHY"; return 1; fi
-  LSM=$(grep -F -- "$P" "$LSF" | head -2); PSM=$(grep -F -e "$P" -e "$SID" "$PSF" | grep -v -F "$PSF" | head -2)
+  # this script is not a user of the worktree: its own ps rows (pid $$, its subshells and children) and its own
+  # open-file rows other than the working directory are left out; every other process still counts
+  LSM=$(awk -F'\t' -v me="$$" '$1!=me || $3=="cwd"' "$LSF" | grep -F -- "$P" | head -2)
+  PSM=$(awk -v me="$$" '$1!=me && $2!=me' "$PSF" | grep -F -e "$P" -e "$SID" | grep -v -F "$PSF" | head -2)
   echo "   gate lsof: ${LSM:-none}   ps: ${PSM:-none}"; [ -z "$LSM$PSM" ] || return 1
   H=$(git -C "$P" rev-parse HEAD); case "$H" in "$TIP"*) echo "   gate HEAD == $TIP: yes";; *) echo "   gate HEAD $H != $TIP"; return 1;; esac
   $G merge-base --is-ancestor "$H" origin/main && echo "   gate ancestor of origin/main: yes" || { echo "   gate ancestor of origin/main: NO"; return 1; }
@@ -121,10 +146,16 @@ $OUT
 EOF
   echo "   gate status --ignored: $N entries, all '!!' allowlisted: $([ $BAD = 0 ] && echo yes || echo NO)"; [ $BAD = 0 ] || return 1
   cur=$($G rev-parse -q --verify "refs/heads/$BR") || { echo "   gate branch missing"; return 1; }
-  ah=$($G rev-list --count origin/main.."$BR"); bt=$(git bundle list-heads "$BK/$R/backup-branches.bundle" "refs/heads/$BR" | cut -d' ' -f1)
-  echo "   gate branch tip=${cur:0:12} ahead=$ah bundle=$([ "$bt" = "$cur" ] && echo equal || echo "DIFFERS(${bt:-none})")"
   case "$cur" in "$TIP"*) ;; *) echo "   gate branch tip != expected"; return 1;; esac
-  [ "$ah" = 0 ] && [ "$bt" = "$cur" ] || return 1
+  # the ancestor gate above already refuses a tip outside origin/main; this count is a second check of the branch itself
+  ah=$($G rev-list --count origin/main.."$BR")
+  if [ "$ah" = 0 ]; then
+    echo "   gate branch tip=${cur:0:12} ahead=0: contained in origin/main, no backup bundle entry required"
+  else
+    bt=$(git bundle list-heads "$BK/$R/backup-branches.bundle" "refs/heads/$BR" 2>/dev/null | cut -d' ' -f1)
+    echo "   gate branch tip=${cur:0:12} ahead=${ah:-unknown}: holds commits that are not in origin/main (backup bundle: $([ "$bt" = "$cur" ] && echo "holds the tip" || echo "${bt:-no entry}")); refused whatever the bundle holds"
+    return 1
+  fi
   return 0
 }
 
@@ -146,7 +177,7 @@ done <<EOF
 $PASSED
 EOF
 
-if [ "$MODE" = dry ]; then printf "=== skipped (dry run):%s\n" "${SKIPPED:- none}"; echo "DRY RUN: nothing changed."; rm -f "$PSF" "$LSF" "$LSR"; exit 0; fi
+if [ "$MODE" = dry ]; then printf "=== skipped (dry run):%s\n" "${SKIPPED:- none}"; echo "DRY RUN: nothing changed."; rm -f "$PSF" "$LSF" "$LSR" "$LSE"; exit 0; fi
 
 echo; echo "### APPLY"
 while IFS='|' read -r R P TIP BR; do
@@ -178,4 +209,4 @@ done
 echo; for r in $REPOS; do echo "AFTER  $(dig $r)"; done
 echo "BEFORE (for comparison):$BEFORE_ALL"
 printf "=== skipped:%s\n" "${SKIPPED:- none}"
-rm -f "$PSF" "$LSF" "$LSR"
+rm -f "$PSF" "$LSF" "$LSR" "$LSE"

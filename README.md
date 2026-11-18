@@ -148,7 +148,7 @@ format. Tests:
 `MANIFEST.txt` is longer than the four mechanism files. By ADR-0006, ADR-0008
 and ADR-0017 it lists every tracked file under `scripts/`, `schemas/`,
 `skills/`, `rules/`, `docs/reference/` and `docs/tooltempest/`, so besides those
-four it also holds the reference document below, the consumer contract
+four it also holds the reference documents below, the consumer contract
 `docs/tooltempest/consumer-contract.md` (the text of the consumer obligation,
 its single source), the universal rules `docs/tooltempest/universal-rules.md`
 (the second file of the contract root), the manifest validator
@@ -171,6 +171,12 @@ document is consulted in place, not installed as a rule.
 - `docs/reference/documentation-rules.md` — a pointer to
   `docs/tooltempest/universal-rules.md`, which now holds the rules this
   document stated. The path stays so that links to it resolve.
+- `docs/reference/pin-check-recovery.md` — what each block of
+  `scripts/tt_pin_check.py` means, the printed fix and which causes an agent may
+  fix, and how hooks are installed in a fresh clone of a consumer.
+- `docs/reference/publication-steps.md` — the ordered steps after a ToolTempest
+  publication (local clone, cache, vendored verifier, repin), the empty-cache
+  block, and the Git versions the tests ran on.
 
 See `docs/adr/0008-reference-documentation-category.md` for why this
 category exists as distinct from `rules/`.

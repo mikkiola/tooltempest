@@ -5,6 +5,12 @@ The script reads the process table and open files, so these tests run on macOS o
 `apply` removes, what it refuses, and that it never uses a force option. Each gate has a test that makes only that
 gate fail, and a failure of the process table or of the open-file listing (`ps`, `lsof`: unavailable, exit non-zero,
 or no output) must skip the item with the reason, never let it through.
+
+Four behaviours are pinned by a positive and a negative case each: the installed payload of the pin is an allowed
+ignored entry (and an unrelated ignored file is not); a branch that is contained in origin/main needs no backup
+bundle (and a branch with unique commits is refused with or without one); the script's own invocation is not a live
+process on the worktree (and a foreign process is); an emptied worktree directory is reported with the command that
+prunes it (and a directory that merely holds something else is not).
 """
 import os
 import shutil
@@ -15,6 +21,8 @@ import unittest
 import uuid
 
 from dist_helpers import REPO_ROOT
+
+MANIFEST = REPO_ROOT / "MANIFEST.txt"
 
 SCRIPT = REPO_ROOT / "scripts" / "worktree_cleanup.sh"
 
@@ -51,6 +59,11 @@ class CleanupScriptTests(unittest.TestCase):
             fh.write("1\n")
         with open(os.path.join(self.repo, ".gitignore"), "w") as fh:
             fh.write("*.log\n__pycache__/\n")
+        for keep in ("scripts/keep.txt", "docs/keep.md"):  # tracked, as in a consumer: these directories are never wholly ignored
+            os.makedirs(os.path.dirname(os.path.join(self.repo, keep)), exist_ok=True)
+            with open(os.path.join(self.repo, keep), "w") as fh:
+                fh.write("tracked\n")
+        self.exclude = os.path.join(self.repo, ".git", "info", "exclude")  # shared by every worktree of the repository
         git(self.repo, "add", "-A")
         git(self.repo, "commit", "-q", "-m", "one")
         git(self.repo, "push", "-q", "origin", "HEAD:main")
@@ -99,13 +112,32 @@ class CleanupScriptTests(unittest.TestCase):
         self.assertIn("SKIP: [r1] %s" % self.wt, out)
         self.assertIn("%s unusable" % tool, out)
 
-    def run_script(self, mode, env_extra=None, worklist=None):
+    def add_ignored(self, rel, text="x\n", src=None):
+        """An ignored file in the worktree (listed in the shared exclude file, as a consumer's .gitignore lists an
+        installed file path by path); `src` copies a real file instead of writing `text`."""
+        path = os.path.join(self.wt, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        if src is not None:
+            shutil.copy(src, path)
+        else:
+            with open(path, "w") as fh:
+                fh.write(text)
+        with open(self.exclude, "a") as fh:
+            fh.write("/%s\n" % rel)
+        return path
+
+    def installed_payload_paths(self):
+        """The consumer-target payload of the pin: MANIFEST.txt lines under scripts/, schemas/ and docs/tooltempest/."""
+        lines = [l.strip() for l in MANIFEST.read_text(encoding="utf-8").splitlines() if l.strip()]
+        return [l for l in lines if l.startswith(("scripts/", "schemas/", "docs/tooltempest/"))]
+
+    def run_script(self, mode, env_extra=None, worklist=None, script=None):
         env = clean_env({"TT_WORKSPACE": self.ws, "TT_BACKUP_DIR": self.bk, "TT_SCRATCH_PREFIX": self.scratch + "/",
                          "TT_VSCODE_STORAGE": self.storage})
         env.update(env_extra or {})
         for k in [k for k, v in env.items() if v is None]:
             del env[k]
-        args = ["/bin/bash", str(SCRIPT), mode] + ([worklist or self.work] if worklist != "" else [])
+        args = ["/bin/bash", str(script or SCRIPT), mode] + ([worklist or self.work] if worklist != "" else [])
         proc = subprocess.run(args, capture_output=True, text=True, env=env, timeout=170)
         return proc.returncode, proc.stdout + proc.stderr
 
@@ -176,24 +208,44 @@ class CleanupScriptTests(unittest.TestCase):
         self.assertIn("gate lsof:", out)
         self.assertNotIn("all gates pass", out)
 
-    def test_a_missing_backup_bundle_blocks(self):
-        rc, out = self.run_script("apply")  # no bundle at all
-        self.assertTrue(os.path.isdir(self.wt), out)
-        self.assertIn("DIFFERS(none)", out)
+    def test_an_integrated_branch_needs_no_backup_bundle(self):
+        # no bundle at all: the tip is contained in origin/main, so nothing is lost by removing the branch
+        rc, out = self.run_script("apply")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("contained in origin/main", out)
+        self.assertFalse(os.path.exists(self.wt), out)
+        self.assertEqual(git(self.repo, "branch", "--list", "feat/x"), "")
+        self.assertIn("=== skipped: none", out)
 
-    def test_a_backup_bundle_that_is_older_than_the_branch_blocks(self):
+    def test_a_stale_backup_bundle_does_not_block_an_integrated_branch(self):
         self.bundle()
         with open(os.path.join(self.wt, "b.txt"), "w") as fh:
             fh.write("more\n")
         git(self.wt, "add", "-A")
         git(self.wt, "commit", "-q", "-m", "after the backup")
-        git(self.repo, "push", "-q", "origin", "feat/x:main")  # integrated, so only the bundle is stale
+        git(self.repo, "push", "-q", "origin", "feat/x:main")  # integrated; the bundle no longer holds the tip
         git(self.repo, "fetch", "-q", "origin")
         self.write_worklist()
-        rc, out = self.run_script("apply")
-        self.assertTrue(os.path.isdir(self.wt), out)
-        self.assertIn("bundle=DIFFERS", out)
-        self.assertNotIn("all gates pass", out)
+        rc, out = self.run_script("dry")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("all gates pass", out)
+        self.assertTrue(os.path.isdir(self.wt))
+
+    def test_a_branch_with_unique_commits_is_refused_by_the_ancestor_gate_with_or_without_a_backup_bundle(self):
+        with open(os.path.join(self.wt, "b.txt"), "w") as fh:
+            fh.write("work\n")
+        git(self.wt, "add", "-A")
+        git(self.wt, "commit", "-q", "-m", "unintegrated")
+        self.write_worklist()
+        for with_bundle in (False, True):
+            with self.subTest(with_bundle=with_bundle):
+                if with_bundle:
+                    self.bundle()  # the tip is saved: the branch is still not integrated, so it still stays
+                rc, out = self.run_script("apply")
+                self.assertTrue(os.path.isdir(self.wt), out)
+                self.assertIn("gate ancestor of origin/main: NO", out)
+                self.assertNotIn("all gates pass", out)
+                self.assertIn("feat/x", git(self.repo, "branch", "--list", "feat/x"))
 
     def test_a_worktree_named_in_the_vscode_storage_file_is_skipped(self):
         self.bundle()
@@ -336,6 +388,112 @@ class CleanupScriptTests(unittest.TestCase):
         self.assertEqual(rc, 1, out)
         self.assertIn("!= expected", out)
         self.assertTrue(os.path.isdir(self.wt))
+
+    # --- (a) the installed payload of the pin is an allowed ignored entry ---
+
+    def test_every_installed_payload_file_of_the_manifest_is_an_allowed_ignored_entry(self):
+        # the real MANIFEST.txt drives this: a payload file added to scripts/, schemas/ or docs/tooltempest/ without
+        # a matching entry of the allowlist fails here, in ToolTempest, instead of blocking every consumer worktree
+        paths = self.installed_payload_paths()
+        self.assertIn("scripts/tt_pin_check.py", paths)
+        self.assertIn("scripts/check_mutable_reads.py", paths)
+        self.assertIn("scripts/worktree_cleanup.sh", paths)
+        for rel in paths + [".tooltempest.receipt.json"]:
+            self.add_ignored(rel)
+        rc, out = self.run_script("dry")
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("not allowlisted", out)
+        self.assertIn("all gates pass", out)
+
+    def test_an_ignored_file_of_scripts_that_is_not_payload_still_blocks(self):
+        for rel in self.installed_payload_paths():
+            self.add_ignored(rel)
+        self.add_ignored("scripts/local_notes.txt")
+        rc, out = self.run_script("apply")
+        self.assertTrue(os.path.isdir(self.wt), out)
+        self.assertIn("not allowlisted: !! scripts/local_notes.txt", out)
+        self.assertNotIn("all gates pass", out)
+
+    # --- (c) the script's own invocation is not a live process on the worktree ---
+
+    def test_the_scripts_own_command_line_that_names_the_session_directory_is_not_a_user_of_the_worktree(self):
+        sid_dir = os.path.join(self.t, self.suffix.split("/")[0])  # the worklist lives in the session directory
+        os.makedirs(sid_dir)
+        work = os.path.join(sid_dir, "worklist.txt")
+        shutil.copy(self.work, work)
+        rc, out = self.run_script("dry", worklist=work)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("gate lsof: none   ps: none", out)
+        self.assertIn("all gates pass", out)
+
+    def test_a_copy_of_the_script_that_is_installed_in_the_worktree_does_not_block_itself(self):
+        installed = self.add_ignored("scripts/worktree_cleanup.sh", src=SCRIPT)
+        os.chmod(installed, 0o755)
+        rc, out = self.run_script("dry", script=installed)  # bash holds the script file open and the command line names it
+        self.assertEqual(rc, 0, out)
+        self.assertIn("gate lsof: none   ps: none", out)
+        self.assertIn("all gates pass", out)
+
+    def test_a_foreign_process_that_names_the_worktree_still_blocks_when_the_script_names_it_too(self):
+        sid_dir = os.path.join(self.t, self.suffix.split("/")[0])
+        os.makedirs(sid_dir)
+        work = os.path.join(sid_dir, "worklist.txt")
+        shutil.copy(self.work, work)
+        # the parent of the script is not the script: its command line names the worktree, so the item is skipped
+        proc = subprocess.run(["/bin/sh", "-c", '/bin/bash "$0" "$@"; :', str(SCRIPT), "dry", work, "marker", self.wt],
+                              capture_output=True, text=True, timeout=170,
+                              env=clean_env({"TT_WORKSPACE": self.ws, "TT_BACKUP_DIR": self.bk,
+                                             "TT_SCRATCH_PREFIX": self.scratch + "/", "TT_VSCODE_STORAGE": self.storage}))
+        out = proc.stdout + proc.stderr
+        self.assertRegex(out, r"gate lsof: none\s+ps: +\d+ +\d+ +/bin/sh -c")
+        self.assertNotIn("all gates pass", out)
+
+    # --- (d) an emptied worktree directory is reported with the command that prunes it ---
+
+    def test_an_empty_directory_of_a_registered_worktree_names_git_worktree_prune(self):
+        for name in os.listdir(self.wt):  # the checkout is gone; the directory and Git's registration remain
+            path = os.path.join(self.wt, name)
+            shutil.rmtree(path) if os.path.isdir(path) and not os.path.islink(path) else os.remove(path)
+        self.assertEqual(os.listdir(self.wt), [])
+        for mode in ("dry", "apply"):
+            with self.subTest(mode=mode):
+                rc, out = self.run_script(mode)
+                self.assertEqual(rc, 0, out)
+                self.assertIn("worktree prune", out)
+                self.assertIn("-C %s worktree prune" % self.repo, out)
+                self.assertIn("SKIP: [r1] %s" % self.wt, out)
+                self.assertNotIn("gate HEAD", out)  # not the misleading "HEAD  != <tip>"
+                self.assertNotIn("all gates pass", out)
+                self.assertTrue(os.path.isdir(self.wt))
+                self.assertIn("feat/x", git(self.repo, "branch", "--list", "feat/x"))
+        self.assertIn(self.wt, git(self.repo, "worktree", "list"))  # the script never prunes
+
+    def test_a_directory_that_holds_only_a_hidden_file_is_not_reported_as_prunable(self):
+        for name in os.listdir(self.wt):
+            path = os.path.join(self.wt, name)
+            shutil.rmtree(path) if os.path.isdir(path) and not os.path.islink(path) else os.remove(path)
+        with open(os.path.join(self.wt, ".hidden"), "w") as fh:
+            fh.write("x\n")
+        rc, out = self.run_script("dry")
+        self.assertNotIn("worktree prune", out)
+        self.assertNotIn("all gates pass", out)
+
+    def test_a_directory_that_holds_something_else_is_not_reported_as_prunable(self):
+        for name in os.listdir(self.wt):
+            path = os.path.join(self.wt, name)
+            shutil.rmtree(path) if os.path.isdir(path) and not os.path.islink(path) else os.remove(path)
+        with open(os.path.join(self.wt, "stray.txt"), "w") as fh:
+            fh.write("not a checkout\n")
+        rc, out = self.run_script("apply")
+        self.assertTrue(os.path.isdir(self.wt), out)
+        self.assertNotIn("worktree prune", out)
+        self.assertNotIn("all gates pass", out)
+
+    def test_a_missing_directory_is_still_reported_as_missing(self):
+        shutil.rmtree(self.wt)
+        rc, out = self.run_script("apply")
+        self.assertIn("directory missing", out)
+        self.assertNotIn("all gates pass", out)
 
 
 if __name__ == "__main__":

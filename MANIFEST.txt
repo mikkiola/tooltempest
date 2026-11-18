@@ -1,4 +1,6 @@
 docs/reference/documentation-rules.md
+docs/reference/pin-check-recovery.md
+docs/reference/publication-steps.md
 docs/tooltempest/consumer-contract.md
 docs/tooltempest/universal-rules.md
 rules/drift-control.md
