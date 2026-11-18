@@ -13,27 +13,54 @@
 #   TT_VSCODE_STORAGE   VS Code globalStorage/storage.json (default below; an override is meant for tests only);
 #                       a worktree named there is in use. The file must exist.
 #
-# It removes a worktree and its branch only when every gate passes: the path comes from `git worktree list`
-# (never built from a prefix), the directory holds a checkout, HEAD and branch are the expected ones, no process or
-# open file uses the path, the tip is contained in origin/main (so the branch holds no commit that is not integrated,
-# and no backup bundle entry is needed: a branch with commits outside origin/main is refused), and
-# `git status --ignored` shows nothing but allowlisted generated paths: caches, and the installed payload of a
-# ToolTempest pin (scripts/, schemas/, docs/tooltempest/ and the receipt; each file is named in the allowlist below,
-# and the distribution tests fail when MANIFEST.txt lists an installed file that the allowlist lacks).
+# It removes a worktree and its branch only when every gate passes. Nothing is guessed, and the script never uses a
+# force option (`git worktree remove` and `git branch -d` only). A dry run runs every check and prints the planned
+# commands; it changes nothing. A gate failure has one of two effects.
+#
+# Run stops: the whole run ends at once (STOP, exit 1; exit 2 for the usage cases), in a dry run as well. Nothing more
+# is removed. Except for the last one, they are checked for every item before any item is gated:
+#   - a mode that is not dry or apply, a worklist that is not a readable file or holds no item, or a missing required
+#     variable (TT_WORKSPACE, TT_BACKUP_DIR, TT_SCRATCH_PREFIX);
+#   - a worklist item that does not have exactly four non-empty fields, or whose expected head is shorter than 7
+#     characters;
+#   - a missing VS Code storage file;
+#   - an item whose path does not resolve to exactly one entry of `git worktree list` of its repository (the path comes
+#     from that list, never from a prefix), a resolved path that does not start with TT_SCRATCH_PREFIX, a HEAD that does
+#     not start with the expected head, or a branch that is not the expected one;
+#   - apply only: the path still exists after `git worktree remove` returned 0.
+#
+# Item gates: an item that fails one is skipped and reported, and the run goes on. Per item, in this order:
+#   1. the directory exists and is not empty (an empty directory is reported with the command that prunes it; the
+#      script never prunes);
+#   2. the path is not named in the VS Code storage file (a worktree named there is in use);
+#   3. `ps` and `lsof` ran with exit 0 and printed output; otherwise every item that reaches this gate is skipped (the
+#      process gate fails closed);
+#   4. no process has the path or its session directory (field 6 of the path split on `/`) in its command line, and no
+#      open file or working directory has the path in its name;
+#   5. HEAD is the expected head;
+#   6. HEAD is an ancestor of origin/main, so the branch holds no commit that is not integrated;
+#   7. `git status --ignored` shows nothing but `!!` entries that the allowlist below names: caches, and the installed
+#      payload of a ToolTempest pin (scripts/, schemas/, docs/tooltempest/ and the receipt; each file is named in the
+#      allowlist below, and the distribution tests fail when MANIFEST.txt lists an installed file that the allowlist
+#      lacks). A modified, staged or untracked entry, and an ignored entry that is not allowlisted, block the item;
+#   8. the branch exists and its tip is the expected head;
+#   9. `git rev-list --count origin/main..BRANCH` is 0 (a second check of the branch itself).
+#
+# Apply mode, per item: it runs gates 1 to 9 again, with their output hidden (a failure skips the item "at apply
+# time"); then `git worktree remove` (a refusal skips the item); then it checks that the path is gone (run stop, above),
+# that the branch still exists, that its tip is the one before the removal, and that no worktree has it checked out
+# (a failure skips the item and keeps the branch); then `git branch -d` (a refusal skips the item).
+#
+# A backup bundle is not a gate and never authorizes removal: a branch with commits outside origin/main is refused
+# whatever the bundle holds. The script does not check who runs it.
 # The script's own process and the processes it starts (`ps`, `lsof`, subshells) are not counted as a user of the
 # worktree, and neither are the files that its own process holds open (bash holds the script file open, which matters
 # when the script is an installed copy inside the worktree); the working directory of any process, its parent, and
 # every other process are counted. A parent shell whose command line names the worktree or its session directory
 # (for example through the worklist path) therefore blocks the item: start the script so that its parent does not.
-# The script implements the ancestor path only: a branch whose tip is saved only in a bundle is refused, because the
-# rule (universal rules, "Worktree lifecycle") also needs the branch to hold no work that is not integrated.
-# A registered worktree whose directory is empty is reported with the command that prunes it; the script never prunes.
-# It uses `git worktree remove` and `git branch -d`, never a force option. An item that fails a gate is skipped and
-# reported; nothing is guessed.
-# The process gate fails closed: if `ps` or `lsof` cannot run, exits non-zero or prints nothing, no item can be shown
-# to be unused, so every item is skipped with that reason. The process table and the open-file list are read once, at
-# the start of the run, and the apply-time gate re-reads that snapshot.
-# bash 3.2 safe; stops at the first non-zero exit of a state-changing command.
+# The process table and the open-file list are read once, at the start of the run, and the apply-time gate re-reads
+# that snapshot.
+# bash 3.2 safe.
 export GIT_OPTIONAL_LOCKS=0
 MODE=${1:-dry}; [ "$MODE" = dry ] || [ "$MODE" = apply ] || { echo "usage: $0 dry|apply WORKLIST"; exit 2; }
 WORKLIST=${2:-}; [ -n "$WORKLIST" ] && [ -f "$WORKLIST" ] || { echo "usage: $0 dry|apply WORKLIST (a readable worklist file is required)"; exit 2; }

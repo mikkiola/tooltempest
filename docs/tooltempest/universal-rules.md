@@ -121,10 +121,10 @@ A session works on a named branch in its own worktree. Each stage has one actor.
 | Work | The session | Commit unfinished work to the branch. Uncommitted changes MUST NOT be the only copy of work. |
 | Finish | The session | Confirm that the work is integrated into `origin/main`. If it is not, record in the session's state record (where the session keeps its progress) that the work is saved on the named branch and is not integrated. |
 | Close | The session | Release the worktree: leave no uncommitted change and stop every process that uses it. The session MUST NOT remove its worktree or its branch. |
-| Clean up | A separate gated process | Remove a worktree and its branch only when no live process uses the worktree, it has no uncommitted change, its branch holds no work that is not integrated, and the branch tip is saved in a backup bundle or is an ancestor of `origin/main`. |
+| Clean up | A separate gated process | Remove a worktree and its branch only when no live process uses the worktree, it has no uncommitted change, its branch holds no work that is not integrated, and the branch tip is an ancestor of `origin/main`. A backup bundle is not a condition and never authorizes removal. |
 
 - The Architect (the Owner's planning role) triggers the cleanup outside the session window. At the end of each stage of the Owner's plan, the Architect requests the lists of worktrees and branches of every repository, and names the items to clean up.
-- `scripts/worktree_cleanup.sh` is the gated process. The header of the script lists every gate. It takes a worklist, and removes an item only when all its gates pass. It uses `git worktree remove` and `git branch -d`, never a force option. It skips an item that fails a gate and reports it.
+- `scripts/worktree_cleanup.sh` is the gated process. The header of the script lists every gate. It takes a worklist, and removes an item only when all its gates pass. It uses `git worktree remove` and `git branch -d`, never a force option. It skips an item that fails a gate and reports it; the run goes on. It stops the whole run instead on any of these: invalid arguments, a worklist that is not a readable file or holds no item, or a missing required environment variable; a malformed worklist item; a missing VS Code storage file; an item whose path does not resolve to exactly one worktree of its repository, is outside the scratch prefix, or has a HEAD or a branch other than the expected one; a path that still exists after `git worktree remove`. The script does not check who runs it.
 
 ## Key words
 
