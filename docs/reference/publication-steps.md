@@ -80,8 +80,13 @@ tree that added this file, once per Git version, with that Git first in `PATH`:
 | 2.44.0 | `/opt/homebrew/bin/git`, first in `PATH` on the Owner's machine | `git --version`; 459, 324, 37 and 78 tests, each suite `OK` with no skip |
 | 2.54.0 | `/usr/bin/git` (Apple Git-157) on the same machine | `/usr/bin/git --version`; 459, 324, 37 and 78 tests, each suite `OK` with no skip |
 
-Stated by the Owner and not verified here: CI ran on 2.56.1. `.github/workflows/checks.yml`
-runs `ubuntu-latest` and pins no Git version, so the version changes without a commit.
+CI: the log of run 44271218455 of `.github/workflows/checks.yml` (commit 17e168d), step
+`actions/checkout`, prints `git version 2.56.1`, and the five jobs of that run succeeded.
+Shown by `gh run view 44271218455 --repo mikkiola/tooltempest --log`, searched for
+`git version`. Established for 2.56.1: that line and those job results. Not established:
+that any test step used that Git binary, and any run of the suites on 2.56.1 outside CI.
+The workflow runs `ubuntu-latest` and pins no Git version, so a later run may print
+another version.
 
 Other versions are untested. No Git version check exists: `git grep -n -e "--version" -- scripts`
 finds only the version option of `tooling.py`, not a check of Git. Behavior that
